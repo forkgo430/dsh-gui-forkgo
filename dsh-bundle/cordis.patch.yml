@@ -1,0 +1,69 @@
+- insert:
+    - id: gui
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        # 工具名前缀：mcp__<serverName>__<工具名>
+        # 规则 ^[A-Za-z0-9_-]{1,32}$；改名后旧前缀 mcp__windows__ 不再存在。
+        serverName: gui
+        transport: stdio
+        command: 'C:\Users\金东权\.local\bin\uvx.exe'
+        args:
+          - '--python'
+          - '3.14'
+          # 依赖仍由 uvx 从 PyPI 装（上游包提供全部 21 个原有工具、满足 Requires-Python>=3.14）。
+          - '--from'
+          - 'windows-mcp'
+          - 'windows-mcp'
+          - 'serve'
+          - '--transport'
+          - 'stdio'
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+          UV_NO_PROGRESS: '1'
+          # 本地分支只覆盖包本体，不接管依赖。
+          #
+          # 为什么不用 `--from <本地目录>`：uvx 对本地目录的构建缓存不跟文件 mtime 走，
+          # 改完源码它仍然复用上一次构建的产物（实测把整个中文版本都改掉了，跑起来还是
+          # 旧文案，而且看不出任何征兆）。PYTHONPATH 让源码直接生效，改一行就是一行，
+          # 不用清缓存、不用重装。
+          #
+          # 指向的目录必须是 windows-mcp 0.8.9 的全量源码树（这里就是完整的 windows_mcp/
+          # 包），不是只放增量文件的覆盖层 —— PYTHONPATH 一旦命中，同名的子模块全都从
+          # 这里取，缺文件就是 ImportError。
+          PYTHONPATH: 'D:\EAGENT\DSH G1\bundles\windows-mcp-src'
+        toolCallTimeoutMs: 120000
+        startupTimeoutMs: 300000
+        failOnStartupError: true
+        reconnect:
+          enabled: true
+          maxAttempts: 5
+
+# ② 把本包 skills/ 加进技能扫描根 —— 和多面手同一个做法。
+#
+# 为什么不是手写绝对路径：发布时不可能知道用户装在哪。用 !!js 在 loader 求值时
+# 从 baseUrl 反解出本包自己的位置，装到哪都对。
+#
+# 为什么按 id 整行覆盖：这两行在 web 模板里默认 disabled: true，覆盖时不写 disabled
+# 就等于重新启用。官方语义是「后层按 id 整行覆盖、config 整体替换不是深合并」，
+# 所以 name 和 config 都要写全，否则会把手势（includeDefaultRoots 等）打回默认。
+#
+# customSkillDirs 是「追加」到默认根之外，不会顶掉 profile 里已有的
+# $DSH_HOME/skills —— 两者并存，sherlock 那些不受影响。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    includeDefaultRoots: false
+    customSkillDirs:
+      - !!js dshHomePath('skills')
+      - !!js >-
+          process.getBuiltinModule('node:path').join(
+            process.getBuiltinModule('node:path').dirname(
+              process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-gui-forkgo/package.json')
+            ),
+            'skills'
+          )
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+

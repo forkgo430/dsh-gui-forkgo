@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "GUI (desktop and window control)",
+    "description": "Drives the whole Windows desktop through the Windows-MCP server: screenshots, clicks, typing, shortcuts, drag, window switching, and virtual desktop management.",
+    "detail": "docs/DETAIL.md"
+  }
+}

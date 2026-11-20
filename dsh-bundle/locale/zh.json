@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "GUI（桌面与窗口控制）",
+    "description": "通过 Windows-MCP 服务器驱动整台 Windows 桌面：截图观察界面、点击坐标、键盘输入、快捷键、拖拽、窗口切换，以及虚拟桌面管理。",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "dsh-gui-forkgo",
+  "version": "1.1.1",
+  "description": "DSH 的图形层 —— 让 AI 直接操控整台 Windows 机器：截图观察、点击、输入、快捷键、窗口与进程、文件、注册表、PowerShell、剪贴板、虚拟桌面。22 个工具 + 一份教 AI 按顺序用它们的技能 · Windows only · 作者赢容",
+  "type": "module",
+  "files": [
+    "cordis.patch.yml",
+    "skills",
+    "locale",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "selftest.js"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "mcp",
+    "windows",
+    "gui",
+    "ui-automation",
+    "computer-use",
+    "skill"
+  ],
+  "author": "赢容",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forkgo430/dsh-gui-forkgo.git",
+    "directory": "dsh-bundle"
+  },
+  "homepage": "https://github.com/forkgo430/dsh-gui-forkgo#readme",
+  "bugs": {
+    "url": "https://github.com/forkgo430/dsh-gui-forkgo/issues"
+  }
+}
