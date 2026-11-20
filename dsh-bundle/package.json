@@ -6,6 +6,7 @@
   "files": [
     "cordis.patch.yml",
     "skills",
+    "vendor",
     "locale",
     "docs",
     "icon.svg",

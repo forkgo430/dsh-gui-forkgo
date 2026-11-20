@@ -28,10 +28,22 @@
           # 旧文案，而且看不出任何征兆）。PYTHONPATH 让源码直接生效，改一行就是一行，
           # 不用清缓存、不用重装。
           #
-          # 指向的目录必须是 windows-mcp 0.8.9 的全量源码树（这里就是完整的 windows_mcp/
-          # 包），不是只放增量文件的覆盖层 —— PYTHONPATH 一旦命中，同名的子模块全都从
+          # 指向的目录必须是 windows-mcp 0.8.9 的全量源码树（完整的 windows_mcp/ 包），
+          # 不是只放增量文件的覆盖层 —— PYTHONPATH 一旦命中，同名的子模块全都从
           # 这里取，缺文件就是 ImportError。
-          PYTHONPATH: 'D:\EAGENT\DSH G1\bundles\windows-mcp-src'
+          #
+          # 路径从本包位置反解，不写死绝对路径：写死的话换台机器、或者别人 clone 下来装，
+          # PYTHONPATH 就指向一个不存在的目录，而 dsh 不会因此报错 —— 它会静默落回
+          # PyPI 上游，于是 VirtualDesktop 消失、屏幕提示变回英文，看起来像"功能没做"。
+          # 源码树随包发布在包内的 vendor/windows-mcp（已在 package.json 的 files 里）。
+          PYTHONPATH: !!js >-
+            process.getBuiltinModule('node:path').join(
+              process.getBuiltinModule('node:path').dirname(
+                process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-gui-forkgo/package.json')
+              ),
+              'vendor',
+              'windows-mcp'
+            )
         toolCallTimeoutMs: 120000
         startupTimeoutMs: 300000
         failOnStartupError: true

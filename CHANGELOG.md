@@ -21,8 +21,27 @@
 
 ### 修复
 
-- 上一版把 `PYTHONPATH` 的坑写进注释却没写进文档，这次在 README「与上游的关系」里说明白：
-  uvx 对本地目录的构建缓存不跟 mtime 走，改完源码仍复用旧产物且无任何提示。
+- **`PYTHONPATH` 从写死绝对路径改成 `!!js` 反解**。原来写的是本机
+  `D:\EAGENT\DSH G1\bundles\windows-mcp-src`，别人 clone 下来装，这个目录不存在，
+  而 dsh 不会报错——它会静默落回 PyPI 上游，于是 `VirtualDesktop` 消失、屏幕提示
+  变回英文，看起来像功能没做。现在是「本包位置 + `vendor/windows-mcp`」。
+- **源码树随包发布**，放在 `dsh-bundle/vendor/windows-mcp/` 并写进 `files`。
+  之前它在本仓外面，npm pack 和 DSH 安装都不会带上。上游 MIT，
+  版权声明随附在 `vendor/windows-mcp/LICENSE-upstream.md`。
+- **`selftest.js` 不再从 patch 正则抠 `PYTHONPATH`**（那已经是个表达式），
+  改为直接验 `vendor/` 目录本身；同时 `uvx` 的位置改成先查 PATH、再试常见安装点，
+  不再写死 `C:\Users\金东权\...`。
+- README 按去 AI 味的规则重写了一遍。保留全部数字、限制与结论，删掉没有信息量的
+  装饰性排版、自我评价式小标题和反复用破折号制造的节奏。
+
+## 1.1.0
+
+（未单独发布，改动并入 1.1.1 的项目化）
+
+- 加 `skills/gui-desktop/SKILL.md`，按多面手「薄壳包 + 外部 MCP + 一份 SKILL.md」补齐第三样。
+- `cordis.patch.yml` 按 id 整行覆盖 `skill-filesystem`，`customSkillDirs` 追加本包 `skills/`。
+- 加 `selftest.js`：验结构、技能 frontmatter、连接层三件事。
+
 
 ## 1.1.0
 

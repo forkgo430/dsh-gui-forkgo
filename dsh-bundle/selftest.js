@@ -30,6 +30,28 @@ const bad = (msg) => {
 };
 const note = (msg) => console.log(`  · ${msg}`);
 
+/** 找 uvx：先看 GUI_UVX 覆盖，再按 PATH，最后试几个常见安装点。 */
+function resolveUvx() {
+  if (process.env.GUI_UVX && existsSync(process.env.GUI_UVX)) return process.env.GUI_UVX;
+
+  const exe = process.platform === 'win32' ? 'uvx.exe' : 'uvx';
+  for (const dir of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':')) {
+    if (!dir) continue;
+    const candidate = join(dir, exe);
+    if (existsSync(candidate)) return candidate;
+  }
+
+  for (const guess of [
+    join(process.env.USERPROFILE ?? '', '.local', 'bin', exe),
+    join(process.env.HOME ?? '', '.local', 'bin', exe),
+    '/usr/local/bin/uvx',
+    '/usr/bin/uvx',
+  ]) {
+    if (guess && existsSync(guess)) return guess;
+  }
+  return '';
+}
+
 // ---------------------------------------------------------------- 1. 结构
 
 console.log('结构：');
@@ -77,13 +99,47 @@ if (!existsSync(patchPath)) {
   if (/args:\s*\n\s*-\s*['"]?\.\.?\//.test(patch)) bad('patch 的 args 里出现了相对路径');
   else ok('args 里没有相对路径');
 
-  // PYTHONPATH 是本地分支挂载点，必须指到存在的目录
-  const m = /PYTHONPATH:\s*'([^']+)'/.exec(patch);
-  if (m) {
-    if (existsSync(m[1])) ok(`PYTHONPATH 指向存在：${m[1]}`);
-    else bad(`PYTHONPATH 指向不存在：${m[1]}`);
-    if (existsSync(join(m[1], 'windows_mcp', '__init__.py'))) ok('PYTHONPATH 是完整源码树（有 windows_mcp/）');
-    else bad('PYTHONPATH 不是完整源码树（缺 windows_mcp/__init__.py）');
+  // PYTHONPATH 是本地分支的挂载点。它由 !!js 从本包位置反解出来
+  // （../vendor/windows-mcp），不是写死的绝对路径 —— 写死的话别人 clone 下来装，
+  // 路径不存在，dsh 不会报错而是静默落回 PyPI 上游：VirtualDesktop 消失、
+  // 屏幕提示变回英文，看起来像功能没做。
+  //
+  // 所以这里不能去 patch 里正则抠路径（那是个表达式），直接验 vendor 目录本身。
+  if (/PYTHONPATH:/.test(patch)) {
+    if (/PYTHONPATH:\s*'[A-Za-z]:[\\/]/.test(patch)) {
+      bad('PYTHONPATH 被写成了绝对路径，别人 clone 下来会失效');
+    } else if (/PYTHONPATH:\s*!!js/.test(patch)) {
+      ok('PYTHONPATH 由 !!js 反解（可移植）');
+    } else {
+      note('PYTHONPATH 既不是 !!js 也不是绝对路径，确认一下是不是故意的');
+    }
+
+    const vendor = join(HERE, 'vendor', 'windows-mcp');
+    if (!existsSync(vendor)) {
+      bad(`vendor 源码树不存在：${vendor}`);
+    } else if (!existsSync(join(vendor, 'windows_mcp', '__init__.py'))) {
+      bad('vendor 里缺 windows_mcp/__init__.py，不是完整源码树');
+    } else {
+      ok('vendor/windows-mcp 是完整源码树');
+
+      // 本分支的两处改动必须在，否则静默退回上游行为
+      const art = join(vendor, 'windows_mcp', 'desktop', 'control_overlay_art.py');
+      if (existsSync(art) && readFileSync(art, 'utf8').includes('AI 正在控制这台电脑')) {
+        ok('vendor 里屏幕提示是中文');
+      } else {
+        bad('vendor 里的屏幕提示还是英文');
+      }
+
+      if (existsSync(join(vendor, 'windows_mcp', 'tools', 'virtual_desktop.py'))) {
+        ok('vendor 里有 virtual_desktop.py');
+      } else {
+        bad('vendor 里缺 virtual_desktop.py');
+      }
+
+      // 上游 MIT，随附许可证是硬要求
+      if (existsSync(join(vendor, 'LICENSE-upstream.md'))) ok('vendor 随附上游 LICENSE');
+      else bad('vendor 缺 LICENSE-upstream.md（MIT 要求保留版权声明）');
+    }
   } else {
     note('patch 里没有 PYTHONPATH，将使用 PyPI 上游版本');
   }
@@ -136,15 +192,26 @@ if (NO_CONNECT) {
 }
 
 async function checkConnect() {
-  // 和 patch 里保持一致：uvx + PyPI 包 + PYTHONPATH 覆盖源码
-  const patch = existsSync(join(HERE, 'cordis.patch.yml'))
-    ? readFileSync(join(HERE, 'cordis.patch.yml'), 'utf8')
-    : '';
+  // patch 里的 PYTHONPATH 是 !!js 表达式，这里不去解析它，按同一个约定算：
+  // 包根 + 'vendor/windows-mcp'。
+  const vendor = join(HERE, 'vendor', 'windows-mcp');
   const pythonPath =
-    process.env.GUI_MCP_PYTHONPATH || /PYTHONPATH:\s*'([^']+)'/.exec(patch)?.[1] || '';
+    process.env.GUI_MCP_PYTHONPATH || (existsSync(vendor) ? vendor : '');
+
+  if (!pythonPath) {
+    note('没找到 vendor 源码树，连接层将只验 PyPI 上游（VirtualDesktop 与文案检查会跳过）');
+  }
+
+  // uvx 的位置各机器不同：先在 PATH 上找，找不到再试常见安装点。
+  const uvx = resolveUvx();
+  if (!uvx) {
+    bad('找不到 uvx。装一个：https://docs.astral.sh/uv/');
+    return;
+  }
+  note(`uvx: ${uvx}`);
 
   const child = spawn(
-    'C:\\Users\\金东权\\.local\\bin\\uvx.exe',
+    uvx,
     ['--python', '3.14', '--from', 'windows-mcp', 'windows-mcp', 'serve', '--transport', 'stdio'],
     {
       env: {
