@@ -40,24 +40,26 @@ DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务�
 
 ## 本地分支怎么接的
 
-**包本体来自本地源码，依赖仍来自 PyPI。**
+**包本体来自包内 vendor 的源码，依赖仍来自 PyPI。**
 
 ```yaml
 args: ['--python','3.14','--from','windows-mcp','windows-mcp','serve','--transport','stdio']
 env:
-  PYTHONPATH: 'D:\EAGENT\DSH G1\bundles\windows-mcp-src'
+  PYTHONPATH: <本包位置>/vendor/windows-mcp   # !!js 反解，不写死
 ```
 
-这次特意不用 `--from <本地目录>`：uvx 对本地目录的构建缓存**不跟文件 mtime 走**，改完源码它照样复用上一次构建的产物。实测把整个文案改成中文之后跑起来还是旧文案，而且没有任何提示。`PYTHONPATH` 让源码直接生效，改一行就是一行。
+不用 `--from <本地目录>`：uvx 对本地目录的构建缓存不看文件 mtime，改完源码它照样复用上一次构建的产物。实测把整个文案改成中文之后跑起来还是旧文案，而且没有任何提示。`PYTHONPATH` 让源码直接生效，改一行就是一行。
 
-代价是 `windows-mcp-src` 必须是**全量源码树**（完整的 `windows_mcp/` 包），不能是只放改动文件的覆盖层——PYTHONPATH 一旦命中，同名子模块全部从这里取，缺文件就是 ImportError。
+代价是那个目录必须是**全量源码树**（完整的 `windows_mcp/` 包），不能是只放改动文件的覆盖层。PYTHONPATH 一旦命中，同名子模块全部从这里取，缺文件就是 ImportError。
 
-源码内容与实测边界见 `../windows-mcp-src/README.local.md`。
+路径由 `!!js` 从本包位置反解，不写死绝对路径。写死的话别人 clone 下来装，那个目录不存在，而 dsh 不会报错——它静默落回 PyPI 上游，于是 VirtualDesktop 消失、屏幕提示变回英文。
+
+源码里的改动与实测边界见 `vendor/windows-mcp/README.local.md`。
 
 ## 改
 
 - 换服务器网关名：`cordis.patch.yml` 里的 `serverName`（工具前缀随之变化，规则 `^[A-Za-z0-9_-]{1,32}$`）
-- 退回纯上游：删掉 `PYTHONPATH` 那一行即可（22 个工具会退回 21 个，`VirtualDesktop` 消失）
+- 退回纯上游：删掉 `PYTHONPATH` 那段即可（22 个工具会退回 21 个，`VirtualDesktop` 消失）
 - 命令跑得慢：调 `toolCallTimeoutMs` / `startupTimeoutMs`
 - 不想自动重连：`reconnect.enabled: false`
 
