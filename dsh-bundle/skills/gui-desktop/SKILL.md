@@ -135,5 +135,5 @@ metadata:
 ## 参考
 
 - 工具清单与参数：`tools/list`（22 个，别凭记忆写参数名）
-- 本机 GUI 插件的位置与改法：`bundles/dsh-windows-mcp/README.md`
-- 屏幕提示文案（蓝光/顶部面板）改在哪：`bundles/windows-mcp-src/README.local.md`
+- 屏幕提示文案（蓝光/顶部面板/接管确认框）改在哪：`vendor/windows-mcp/windows_mcp/desktop/control_overlay_art.py`
+  与 `control_consent.py`，都在本 bundle 内
