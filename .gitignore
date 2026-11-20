@@ -59,6 +59,10 @@ CLAUDE.md
 .cursor/
 .aider*
 
+# 用户全局 gitignore 里有 *.local.md（Qoder 的私有文件），会把 vendor 里那份
+# README.local.md 一起挡掉。那份是包的一部分，记录本分支对上游改了什么，要进库。
+!dsh-bundle/vendor/windows-mcp/README.local.md
+
 # ── 本项目的发布产物 ────────────────────────────────────────────────────
 *.tgz
 *.zip
