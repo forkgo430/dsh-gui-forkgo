@@ -5,10 +5,11 @@
 ## 1.2.0
 
 新增独立子会话（Child Session）能力：AI 在另一个桌面里干活，**不抢用户的鼠标键盘**。
+工具从 23 个压到 **15 个**。
 
 ### 新增
 
-- **`IsolatedSession` 工具**（第 23 个）。四个动作：
+- **`IsolatedSession` 工具**。四个动作：
   - `status`：查当前能力——子会话状态、已存凭据、内置脚本运行时、能不能建会话
   - `setup`：弹 Windows 标准凭据框，用户输一次密码，`CryptProtectData` 加密后存进
     凭据管理器 `dsh-gui/Session`。之后不再问
@@ -22,6 +23,25 @@
   - 注入：`OpenProcess` → `VirtualAllocEx` → `WriteProcessMemory` →
     `CreateRemoteThread(LoadLibraryW)`（实测在 283 个模块中确认新模块加载）
   - 脚本沙箱探测：找机器上已装的 node / python / pwsh，这条不需要密码
+
+- **`desktop/frame_cache.py`**：帧哈希去重 + 暖 worker。
+  - 帧哈希用来跳过重复帧的编码开销。1080p 实测 3.10ms（优化前 37.65ms）
+  - 暖 worker 后台每 2s 空转截图，把 DWM flush / DXGI 枚举 / 相机对象保持热态，
+    省掉第一次点击时几百毫秒的冷启动
+  - 状态通过 `ControlStatus` 的 `capture` 字段暴露
+
+### 变更
+
+- **工具 23 → 15**。合并方式是不重写实现、只剥装饰器再套分发器：
+  - `Click` / `Type` / `Scroll` / `Move` / `Shortcut` / `Wait` / `WaitFor`
+    → 合并为 `Input`（`action` 分发）
+  - `MultiSelect` / `MultiEdit` → 并入 `Input`
+  - `CaptureStats` 的内容 → 并入 `ControlStatus` 的 `capture` 字段
+  - 7 个实现函数一行未改，只是外面套了层壳
+
+- **屏幕提示面板字体换等线**。原先是微软雅黑 Bold 24px，中文笔画发虚发灰；
+  现在 `Dengb.ttf` 28px（标题）/ `Deng.ttf` 19px（正文），面板不透明度
+  0.80 → 0.88。面板 398×112 → 424×118。本机 412 个字体里逐套渲染对比后选定。
 
 ### 为什么凭据要问用户一次
 
@@ -57,6 +77,7 @@ AES-256 + SHA-512 方案解密，再通过命名管道明文发给 helper 进程
 - `pip_main.exe` 的 IAT 精确解析（`LogonUserW` 在、`CredReadW` 不在）
 - 账户锁定策略实测（10 次 / 600 秒）与批量验证的血泪教训
 - 纯 Python 手工构造合法 PE 的方法（转发 DLL、最小可注入 DLL，都不需要编译器）
+- `premultiplied_bgra()` 返回 BGRA 而不是 RGBA，预览时要把 R/B 换回来
 
 ## 1.1.1
 

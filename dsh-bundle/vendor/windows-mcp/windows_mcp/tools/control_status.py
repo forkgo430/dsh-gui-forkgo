@@ -9,7 +9,7 @@ from windows_mcp.infrastructure.thread_affinity import uia_worker_status
 def register(mcp, *, get_desktop, get_analytics):
     @mcp.tool(
         name="ControlStatus",
-        description="Get desktop control owner, enabled state, gate policy, configured idle timeout and remaining user idle wait in seconds. AI control has no time limit: it lasts until the user takes over or release=true hands the desktop back, so release when the desktop work is done or before waiting on the user. Settings are read-only and changes require a server restart.",
+        description="查控制权与截图缓存的状态。返回：桌面控制归谁、是否启用、门禁策略、空闲超时与剩余等待秒数，以及 UIA worker 忙不忙、截图帧哈希缓存了几个区域、暖 worker 预热了几次。AI 控制没有时间上限——直到用户接管，或传 release=true 主动交还。设置是只读的，改了要重启服务。",
         annotations=ToolAnnotations(
             title="ControlStatus",
             readOnlyHint=False,
@@ -22,8 +22,13 @@ def register(mcp, *, get_desktop, get_analytics):
         controller = get_controller()
         status = controller.release() if release else controller.status()
         worker = uia_worker_status()
+        from windows_mcp.desktop.frame_cache import get_frame_cache, warmer_stats
         return {
             **status,
             "ui_busy": worker["busy"],
             "uia_worker": worker,
+            "capture": {
+                "frame_cache": get_frame_cache().stats(),
+                "warm_worker": warmer_stats(),
+            },
         }

@@ -40,14 +40,15 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 
 ## 提供什么
 
-服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 23 个：
+服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 15 个：
 
 | 能力 | 工具 | 说明 |
 |---|---|---|
 | 观察 | `Snapshot` · `Screenshot` · `DisplayInventory` | 控件树带可点坐标；`use_vision=False` 时只返回文本，不附图 |
+| 输入 | `Input` | 一个入口。`action` 分发：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit |
 | 鼠标 | `Click` · `Move` · `Scroll` · `MultiSelect` | 按坐标或按控件；拖拽、滚轮、多选 |
 | 键盘 | `Type` · `Shortcut` · `MultiEdit` | 输入、快捷键、批量填多格 |
-| 窗口与程序 | `App` · `Process` · `Wait` · `WaitFor` | 启动、切换、调整窗口、等条件成立 |
+| 窗口与程序 | `App` · `Process` | 启动、切换、调整窗口、查进程 |
 | 文件与系统 | `FileSystem` · `Registry` · `PowerShell` · `Clipboard` · `Scrape` · `Notification` | |
 | 控制权 | `ControlStatus` | 谁在控制、空闲多久交还 |
 | **虚拟桌面** | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 |
@@ -175,7 +176,7 @@ npm run selftest:offline   # 只验结构与技能
    `PYTHONPATH` 是不是由 `!!js` 反解而不是写死的绝对路径、`vendor/` 是不是完整的源码树。
 2. **技能 frontmatter** —— `name` 是否为 kebab-case 且与目录名一致、`description` 是否为空。
    缺 description 时 dsh 不会加载，也不报错，表现是「AI 不会用」。
-3. **连接层** —— 真起 stdio、列工具，确认 23 个工具里 `VirtualDesktop` 在、屏幕文案是中文。
+3. **连接层** —— 真起 stdio、列工具，确认 15 个工具里 `VirtualDesktop` 在、屏幕文案是中文。
 
 ## 与上游的关系
 

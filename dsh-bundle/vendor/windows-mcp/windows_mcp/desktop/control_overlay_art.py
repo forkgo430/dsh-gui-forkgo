@@ -41,8 +41,21 @@ _BADGE_GAP = 8
 # CJK-capable faces, best first, per weight. A missing face falls through to the
 # next one and finally to Latin faces: the notice must render on any Windows
 # install, and a missing glyph would come out as tofu rather than as English.
-_TITLE_FACES = ("msyhbd.ttc", "Dengb.ttf", "simhei.ttf", "seguisb.ttf")
-_HINT_FACES = ("msyh.ttc", "Deng.ttf", "simsun.ttc", "segoeui.ttf")
+#
+# 字体选择：本机 412 个字体里逐套渲染对比过（等线 / 微软雅黑 / 微软正黑 /
+# 黑体 / 华文细黑 / Adobe 黑体）。等线（Deng）在中英混排上最干净——雅黑的
+# 中文笔画在小字号下发软发灰，黑体太硬，“AI”与中文之间的空隙也更大。
+# 等线不在时才有必要回退到雅黑。
+_TITLE_FACES = ("Dengb.ttf", "msyhbd.ttc", "simhei.ttf", "seguisb.ttf")
+_HINT_FACES = ("Deng.ttf", "msyh.ttc", "simsun.ttc", "segoeui.ttf")
+
+# 字号阶梯：标题比正文大 9px。28/19 是逐档试出来的——标题再小就发虚，
+# 正文再小（原来的 16）在 1920 屏上隔着房间看不清。
+_TITLE_SIZE = 28
+_HINT_SIZE = 19
+# 面板不透明度。原来的 0.80 让白字透出背景色，笔画边缘发灰；0.88 保住
+# 层次感的同时让文字落到实色上。
+_NOTICE_ALPHA = 0.88
 
 
 def _load_font(faces: tuple[str, ...], size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -264,11 +277,12 @@ def _notice_bitmap(screen_width: int) -> tuple[int, int, bytes] | None:
     if available_width < 200:
         return None
     horizontal_padding = 32 if screen_width >= 640 else 20
-    # Prefer presentation-sized text, then shrink only when a monitor is narrow.
-    # The ceiling is 16 so the title lands at 24px: readable across the room,
-    # small enough that the panel stays a strip rather than a dialog.
-    for hint_size in range(16, 7, -1):
-        title_font = _load_font(_TITLE_FACES, hint_size + 8)
+    # 先按设计字号排，只有窄屏才逐档缩小。28/19 在 1920 上宽度 424px，
+    # 远小于可用宽度；这里保留回退只是为了让极小屏也能出图。
+    for shrink in range(0, 10):
+        title_size = _TITLE_SIZE - shrink
+        hint_size = _HINT_SIZE - shrink
+        title_font = _load_font(_TITLE_FACES, title_size)
         hint_font = _load_font(_HINT_FACES, hint_size)
         measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
         title_box = measure.textbbox((0, 0), _NOTICE_TITLE, font=title_font)
@@ -296,8 +310,11 @@ def _notice_bitmap(screen_width: int) -> tuple[int, int, bytes] | None:
 
     height = title_height + mouse_height + hint_height + 54
     image = Image.new("RGBA", (width, height), (8, 42, 88, 0))
-    # Fade every edge from transparent to 80%; the rounded mask softens the corners too.
-    image.putalpha(_notice_panel_mask(width, height).point(lambda alpha: round(alpha * 0.8)))
+    # Fade every edge from transparent to _NOTICE_ALPHA; the rounded mask softens
+    # the corners too. 0.80 washed the glyph edges out against bright wallpapers.
+    image.putalpha(
+        _notice_panel_mask(width, height).point(
+            lambda alpha: round(alpha * _NOTICE_ALPHA)))
     draw = ImageDraw.Draw(image)
     title_y = 18 - title_box[1]
     hint_y = 36 + title_height + mouse_height - hint_box[1]

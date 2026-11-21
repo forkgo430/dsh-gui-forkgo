@@ -218,26 +218,12 @@ def register(
     get_desktop: Callable[[], Any],
     get_analytics: Callable[[], Any],
 ) -> None:
-    @mcp.tool(
-        name="Click",
-        description=(
-            "Performs mouse clicks at specified coordinates [x, y] or passing a UI element's label/id. "
-            "Supports button types: 'left' for selection/activation, 'right' for context menus, 'middle'. "
-            "Supports clicks: 0=hover only (no click), 1=single click (select/focus), 2=double click (open/activate). "
-            "Provide either loc or label."
-        ),
-        annotations=ToolAnnotations(
-            title="Click",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Click-Tool", run_sync_in_thread=False)
     def click_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
+        locs: list[list] | str | None = None,
+        labels: list | str | None = None,
+        press_ctrl: bool | str = True,
         button: Literal["left", "right", "middle"] = "left",
         clicks: int = 1,
         ctx: Context = None,
@@ -261,18 +247,6 @@ def register(
         # A click at a disabled window is dropped by Windows, so say what blocked it.
         return f"{answer} {warning}" if warning else answer
 
-    @mcp.tool(
-        name="Type",
-        description="Types text at specified coordinates [x, y] or passing a UI element's label/id. Set clear=True to clear existing text first (Home, Shift+End, Backspace; never Ctrl+A, which many apps treat as 'mark every record'), False to append. The answer says how the field was cleared and what it reads back when the field exposes its text, and warns when focus moved away while typing (e.g. a message box took the keystrokes). Set press_enter=True to submit after typing. Set caret_position to 'start' or 'end' to type at the beginning or end of the field (Home/End; Ctrl+Home/Ctrl+End when the clicked field is a document or a native multi-line edit box, so the whole text rather than the clicked line), or 'idle' (default) to type where the click put the caret. Provide either loc or label. clear and press_enter accept only true or false. An empty text types nothing, so combine it with clear=True to just empty a field.",
-        annotations=ToolAnnotations(
-            title="Type",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Type-Tool", run_sync_in_thread=False)
     def type_tool(
         text: str,
         loc: list[int] | str | None = None,
@@ -303,18 +277,6 @@ def register(
         result = f"Typed {text} at ({x},{y})."
         return f"{result} {note}" if isinstance(note, str) and note else result
 
-    @mcp.tool(
-        name="Scroll",
-        description="Scrolls at coordinates [x, y], a UI element's label/id, or current mouse position if loc=None. Type: vertical (default) or horizontal. Direction: up/down for vertical, left/right for horizontal. wheel_times controls amount (1 wheel ≈ 3-5 lines). Use for navigating long content, lists, and web pages.",
-        annotations=ToolAnnotations(
-            title="Scroll",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Scroll-Tool", run_sync_in_thread=False)
     def scroll_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
@@ -335,29 +297,6 @@ def register(
         where = f"({loc[0]},{loc[1]})" if loc else "the current mouse position"
         return f"Scrolled {type} {direction} by {wheel_times} wheel times at {where}."
 
-    @mcp.tool(
-        name="Move",
-        description=(
-            "Moves mouse cursor to coordinates [x, y] or passing a UI element's label/id. "
-            "Set drag=True to perform a drag-and-drop operation from the current mouse position "
-            "to the target coordinates, or provide from_loc=[x, y] to make the drag explicit-start "
-            "and atomic in one tool call. Optional duration controls bounded intermediate movement. "
-            "Default (drag=False) is a simple cursor move (hover). "
-            "Drag uses synthesized mouse input, which XAML shell surfaces such as Start menu "
-            "tiles and pinned taskbar buttons ignore: there the drag does nothing even though "
-            "the call succeeds, so use their context-menu commands (for example Move to front) "
-            "instead and check the result with a Screenshot. "
-            "Provide either loc or label."
-        ),
-        annotations=ToolAnnotations(
-            title="Move",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Move-Tool", run_sync_in_thread=False)
     def move_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
@@ -410,55 +349,14 @@ def register(
             desktop.move(loc)
             return f"Moved the mouse pointer to ({x},{y})."
 
-    @mcp.tool(
-        name="Shortcut",
-        description='Executes keyboard shortcuts using key combinations separated by +. Examples: "ctrl+c" (copy), "ctrl+v" (paste), "alt+tab" (switch apps), "win+r" (Run dialog), "win" (Start menu), "ctrl+shift+esc" (Task Manager). Use for quick actions and system commands.',
-        annotations=ToolAnnotations(
-            title="Shortcut",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Shortcut-Tool")
     def shortcut_tool(shortcut: str, ctx: Context = None):
         get_desktop().shortcut(shortcut)
         return f"Pressed {shortcut}."
 
-    @mcp.tool(
-        name="Wait",
-        description="Pauses execution for specified duration in seconds. Use when waiting for: applications to launch/load, UI animations to complete, page content to render, dialogs to appear, or between rapid actions. Helps ensure UI is ready before next interaction.",
-        annotations=ToolAnnotations(
-            title="Wait",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "Wait-Tool")
     def wait_tool(duration: int, ctx: Context = None) -> str:
         time.sleep(duration)
         return f"Waited for {duration} seconds."
 
-    @mcp.tool(
-        name="WaitFor",
-        description=(
-            "Waits until a UI condition is satisfied, polling the Windows accessibility tree "
-            "inside the tool to avoid repeated Snapshot calls. Conditions: text_exists, "
-            "active_window, element_exists, element_enabled, focused_element. Provide text "
-            "and/or window_name depending on the condition. Set use_dom=True for browser DOM text."
-        ),
-        annotations=ToolAnnotations(
-            title="WaitFor",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
-    )
-    @with_analytics(get_analytics(), "WaitFor-Tool", run_sync_in_thread=False)
     def wait_for_tool(
         condition: str,
         text: str | None = None,
@@ -509,3 +407,161 @@ def register(
                     f"Timed out after {timeout:.2f}s waiting for '{normalized}': {last_detail}."
                 )
             time.sleep(min(interval, remaining))
+
+
+
+    def multi_select_tool(
+        locs: list[list[int]] | str | None = None,
+        labels: list[int] | str | None = None,
+        press_ctrl: bool | str = True,
+        ctx: Context = None,
+    ) -> str:
+        desktop = get_desktop()
+        locs = _as_loc(locs)
+        labels = _as_loc(labels)
+        if locs is None and labels is None:
+            raise ValueError("Either locs or labels must be provided.")
+        locs = locs or []
+        if labels is not None:
+            if desktop.desktop_state is None:
+                raise ValueError("Desktop state is empty. Please call Snapshot first.")
+            try:
+                resolved_locs = desktop.get_coordinates_from_labels(labels)
+                locs.extend([list(loc) for loc in resolved_locs])
+            except Exception as e:
+                raise ValueError(f"Failed to resolve labels {labels}: {e}")
+
+        press_ctrl = _as_bool(press_ctrl, "press_ctrl")
+        desktop.multi_select(press_ctrl, locs)
+        elements_str = "\n".join([f"({loc[0]},{loc[1]})" for loc in locs])
+        return f"Multi-selected elements at:\n{elements_str}"
+
+    def multi_edit_tool(
+        locs: list[list] | str | None = None,
+        labels: list[list] | str | None = None,
+        ctx: Context = None,
+    ) -> str:
+        desktop = get_desktop()
+        locs = _as_loc(locs)
+        labels = _as_loc(labels)
+        if locs is None and labels is None:
+            raise ValueError("Either locs or labels must be provided.")
+        locs = locs or []
+        if labels is not None:
+            if desktop.desktop_state is None:
+                raise ValueError("Desktop state is empty. Please call Snapshot first.")
+
+            # Pre-validate and extract labels and texts
+            processed_labels = []
+            for item in labels:
+                if len(item) != 2:
+                    raise ValueError(f"Each label item must be [label, text]. Invalid: {item}")
+                try:
+                    processed_labels.append((int(item[0]), item[1]))
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid label id in item: {item}")
+
+            try:
+                label_ids = [item[0] for item in processed_labels]
+                resolved_coords = desktop.get_coordinates_from_labels(label_ids)
+                for (x, y), (_, text) in zip(resolved_coords, processed_labels):
+                    locs.append([x, y, text])
+            except Exception as e:
+                raise ValueError(f"Failed to process labels: {e}")
+
+        notes = desktop.multi_edit(locs)
+        elements_str = ", ".join([f"({e[0]},{e[1]}) with text '{e[2]}'" for e in locs])
+        warnings = [n for n in notes or [] if isinstance(n, str) and n.startswith("Warning")]
+        result = f"Multi-edited elements at: {elements_str}"
+        return "\n".join([result, *warnings])
+
+    @mcp.tool(
+        name="Input",
+        description=(
+            "鼠标、键盘、等待，一个入口。按 action 分发："
+            "click=按坐标或控件点击；type=输入文字；scroll=滚轮；move=移动指针或拖拽；"
+            "shortcut=快捷键组合；wait=固定等待；wait_for=等条件成立；"
+            "multi_select=批量选或多点；multi_edit=批量填多格。"
+            "click 支持 button（left/right/middle）与 clicks（0=悬停 1=单击 2=双击），"
+            "按控件比按坐标稳。type 的 clear=True 清空再输。"
+            "wait_for 的 condition 可选 text_exists / active_window / element_exists / "
+            "element_enabled / focused_element。"
+        ),
+        annotations=ToolAnnotations(
+            title="Input",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
+    @with_analytics(get_analytics(), "Input-Tool", run_sync_in_thread=False)
+    def input_tool(
+        action: str,
+        loc: list[int] | str | None = None,
+        label: int | None = None,
+        button: Literal["left", "right", "middle"] = "left",
+        clicks: int = 1,
+        text: str = "",
+        clear: bool | str = False,
+        caret_position: Literal["start", "idle", "end"] = "idle",
+        press_enter: bool | str = False,
+        direction: str = "down",
+        wheel_times: int = 1,
+        amount: int = 3,
+        to_x: int = 0,
+        to_y: int = 0,
+        drag: bool | str = False,
+        duration: float | int | str | None = None,
+        shortcut: str = "",
+        condition: str = "",
+        window_name: str | None = None,
+        timeout: float = 10.0,
+        interval: float = 0.25,
+        use_dom: bool | str = False,
+        ctx: Context = None,
+    ) -> str:
+        act = (action or "").strip().lower()
+
+        if act == "click":
+            if loc is None and label is None:
+                raise ValueError("click 需要 loc 或 label")
+            return click_tool(loc=loc, label=label, button=button,
+                              clicks=clicks, ctx=ctx)
+
+        if act == "type":
+            return type_tool(text=text, loc=loc, label=label, clear=clear,
+                             caret_position=caret_position,
+                             press_enter=press_enter, ctx=ctx)
+
+        if act == "scroll":
+            return scroll_tool(loc=loc, label=label, direction=direction,
+                               wheel_times=wheel_times, type=type, ctx=ctx)
+
+        if act == "move":
+            return move_tool(loc=loc, label=label, drag=drag,
+                             from_loc=None, duration=duration, ctx=ctx)
+
+        if act == "shortcut":
+            if not shortcut:
+                raise ValueError("shortcut 需要组合键，例如 'ctrl+c'")
+            return shortcut_tool(shortcut=shortcut, ctx=ctx)
+
+        if act == "wait":
+            return wait_tool(duration=int(duration or 1), ctx=ctx)
+
+        if act == "wait_for":
+            return wait_for_tool(condition=condition, text=text,
+                                 window_name=window_name, timeout=timeout,
+                                 interval=interval, use_dom=use_dom, ctx=ctx)
+
+        if act == "multi_select":
+            return multi_select_tool(locs=locs, labels=labels,
+                                     press_ctrl=press_ctrl, ctx=ctx)
+
+        if act == "multi_edit":
+            return multi_edit_tool(locs=locs, labels=labels, ctx=ctx)
+
+        raise ValueError(
+            f"未知 action {action!r}。可用：click / type / scroll / move / "
+            f"shortcut / wait / wait_for / multi_select / multi_edit")

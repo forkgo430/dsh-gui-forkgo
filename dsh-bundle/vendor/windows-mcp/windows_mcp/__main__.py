@@ -353,6 +353,20 @@ def _build_mcp() -> FastMCP:
 
         watchdog = _start_watchdog(desktop)
 
+        # 暖 worker：后台空转截图，把 DWM flush / DXGI 输出枚举 / 相机对象
+        # 一直保持热态。冷启动几百毫秒的卡顿不该让用户第一次点 Snapshot 时吃到。
+        # 间隔 2s，只在截图后端可用时才起，失败不影响主流程。
+        try:
+            from windows_mcp.desktop.frame_cache import start_warmer
+            from windows_mcp.desktop import screenshot as _shot
+
+            def _warm_capture(_rect):
+                _shot.capture(None)
+
+            start_warmer(_warm_capture, interval=2.0)
+        except Exception:  # noqa: BLE001 — 暖 worker 是优化，挂了不能拖垮服务
+            logger.debug("预热线程启动失败，忽略", exc_info=True)
+
         # Set thresholds before installing input hooks; invalid TOML was rejected at load.
         controller.mouse_takeover_units = _control_config.mouse_takeover_units
         controller.mouse_takeover_pixels = _control_config.mouse_takeover_pixels
@@ -380,6 +394,11 @@ def _build_mcp() -> FastMCP:
                         control_overlay.stop()
                 finally:
                     logger.debug("Shutting down: stopping watchdog and analytics")
+                    try:
+                        from windows_mcp.desktop.frame_cache import stop_warmer
+                        stop_warmer()
+                    except Exception:  # noqa: BLE001
+                        pass
                     if watchdog:
                         watchdog.stop()
                     if analytics:
