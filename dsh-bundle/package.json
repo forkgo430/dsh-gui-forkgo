@@ -1,12 +1,15 @@
 {
   "name": "dsh-gui-forkgo",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "DSH 的图形层 —— 让 AI 直接操控整台 Windows 机器：截图观察、点击、输入、快捷键、窗口与进程、文件、注册表、PowerShell、剪贴板、虚拟桌面、独立子会话。15 个工具 + 一份教 AI 按顺序用它们的技能 · Windows only · 作者赢容",
   "type": "module",
   "files": [
     "cordis.patch.yml",
     "skills",
     "vendor",
+    "!vendor/**/__pycache__",
+    "!vendor/**/*.pyc",
+    "!vendor/**/*.pyo",
     "locale",
     "docs",
     "icon.svg",

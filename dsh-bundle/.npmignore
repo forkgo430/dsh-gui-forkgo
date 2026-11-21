@@ -1,0 +1,31 @@
+# npm 打包排除规则的补充说明
+#
+# 注意：这个文件在 files 字段存在时基本不起作用。npm 的优先级是
+#   files 字段 > .npmignore > .gitignore
+# 本包 package.json 里写了 files，所以真正生效的是 files 里的 !排除条目。
+# 排掉 .pyc 的那两条在 package.json 的 files 里：
+#     "!vendor/**/__pycache__",
+#     "!vendor/**/*.pyc",
+#
+# 保留这个文件是为了在别人只用 npm pack 而不看 package.json 时，
+# 也能知道哪些东西不该进包。真要让规则生效，就把它挪到 files 覆盖不到的位置，
+# 或者干脆不用 files。
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.log

@@ -2,6 +2,44 @@
 
 本项目的版本沿革。包名轨迹：`@local/windows-mcp` → `@local/gui` → **`dsh-gui-forkgo`**。
 
+## 1.2.1
+
+修 npm 包的污染。
+
+### 修复
+
+**1.2.0 的包里混进了 83 个 `.pyc`。** 它们散布在 `vendor/windows-mcp/` 下的
+12 个 `__pycache__` 目录里，一共 1.6 MB。这不只是体积问题：`.pyc` 是 CPython 3.14
+的字节码，用户环境如果是别的 Python 版本，这些陈旧字节码可能让导入出错。
+
+根因是 npm 的优先级：`files` 字段 > `.npmignore` > `.gitignore`。
+`dsh-bundle/package.json` 里 `files` 写了 `"vendor"`，npm 就把整个目录原样装进去，
+`.gitignore` 里那条 `__pycache__/` 根本没被读到。
+
+修法是在 `files` 里加排除条目：
+
+```json
+"files": [
+  "vendor",
+  "!vendor/**/__pycache__",
+  "!vendor/**/*.pyc",
+  "!vendor/**/*.pyo",
+  ...
+]
+```
+
+效果：
+
+| | 1.2.0 | 1.2.1 |
+|---|---|---|
+| 包大小 | 925.8 kB | 317.9 kB |
+| 解压后 | 3.0 MB | 1.4 MB |
+| 文件数 | 187 | 104 |
+| `.pyc` | 83 | 0 |
+
+对了功能没影响，只是包干净了。另外补了一份 `.npmignore` 说明为什么它在这个包里
+不生效，免得后来人以为改了它就能排掉文件。
+
 ## 1.2.0
 
 新增独立子会话（Child Session）能力：AI 在另一个桌面里干活，**不抢用户的鼠标键盘**。
