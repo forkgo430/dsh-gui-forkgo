@@ -2,6 +2,57 @@
 
 本项目的版本沿革。包名轨迹：`@local/windows-mcp` → `@local/gui` → **`dsh-gui-forkgo`**。
 
+## 1.2.2
+
+修三个实测发现的 bug。第一个是严重的资源泄漏。
+
+### 修复
+
+**`IsolatedSession` 的 `stop` 只关宿主，不注销会话。**
+
+这是最严重的一个。`stop` 写个停止标记让 RDP 宿主断开，然后看「会话里还有没有
+active 的 explorer」——宿主一断，会话变 `disconnected`，这个判断立刻不满足，
+于是报「子会话已关闭」并返回 `ok: true`。
+
+但会话根本没死：`explorer`、`dwm`、`csrss`、`rdpclip` 三十多个进程还在跑，
+每个占几百 MB。而且杀 explorer 三秒就自动重启，因为那是个完整的登录会话。
+
+后果是反复 start/stop 会不断堆积孤儿会话。
+
+现在 `stop` 走三步：让宿主断开 → **调 `WTSLogoffSession` 注销每个子会话** →
+等会话从列表里真的消失。实测：
+
+```
+修复前  stop 返回 ok:true，会话 4 仍有 31 个进程
+修复后  start 17.4s 建出 session 6（21 进程）
+        stop 1.6s，消息「子会话已注销：[6]」
+        会话彻底消失，零残留
+```
+
+**`Screenshot` 交还控制权后返回带光晕的旧帧。**
+
+控制权在 AI 手上时，四周渐变光和顶部提示面板会画进截图；`release` 后那些装饰
+消失，但帧哈希缓存还留着上一帧。下次截图如果画面碰巧命中旧帧，就会把带光晕的
+旧图当成当前画面返回，看起来像光效卡死了。
+
+第一次修的时候把清理放在 `if changed:` 里面，条件是 `state == "ai"`。实测发现
+`release()` 被调用时 state 往往是 `unavailable` 或已经是 `ready`，changed 为
+False，清理被跳过——而用户正是在这时候看到旧图。现在改成无条件执行，清一次
+字典没有代价。实测 `cached_regions` 从 1 变成 0。
+
+**`VirtualDesktop` 的 index 编号不一致。**
+
+`list` 返回的 index 是 `range()` 给的 0 起，而 `target` 参数按 1 起解析。
+「列表里第 1 个」和「target=1」指的不是同一个桌面，传错一次就把窗口挪到别处。
+
+现在统一 1 起。同时修掉两处跟着 `+1` 的地方（错误提示里的桌面列表、
+`windows` 动作返回的 `desktop_index`），否则会多算一次。实测 `index=1` 与
+`_resolve(1)` 拿到同一个桌面。
+
+### 顺带
+
+`control.py` 加了 logger（之前没有，清缓存失败时无处记录）。
+
 ## 1.2.1
 
 修 npm 包的污染。

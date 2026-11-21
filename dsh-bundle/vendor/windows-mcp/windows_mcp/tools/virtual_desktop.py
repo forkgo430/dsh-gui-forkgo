@@ -134,8 +134,8 @@ def _read_desktops() -> list[dict[str, Any]]:
     total = array.GetCount()
 
     desktops: list[dict[str, Any]] = []
-    for index in range(total):
-        unknown = array.GetAt(index, ctypes.byref(core.IVirtualDesktop._iid_))
+    for position in range(total):
+        unknown = array.GetAt(position, ctypes.byref(core.IVirtualDesktop._iid_))
         desktop = unknown.QueryInterface(core.IVirtualDesktop)
         desktop_id = _desktop_id(desktop)
         # The name lives in the registry, not in COM; unnamed desktops have no
@@ -143,7 +143,11 @@ def _read_desktops() -> list[dict[str, Any]]:
         name = mgr._get_name_from_registry(desktop_id)
         desktops.append(
             {
-                "index": index,
+                # 编号从 1 开始，和 target 参数的约定一致。
+                # 之前这里用的是 range() 给的 0 起位置，而 _resolve 按 1 起
+                # 解析 target，于是「列表里第 1 个」和「target=1」指的不是
+                # 同一个桌面——传错一次就把窗口挪到别处了。
+                "index": position + 1,
                 "desktop_id": desktop_id,
                 "name": name,
                 "current": desktop_id == current_id,
@@ -193,7 +197,7 @@ def _resolve(target: str | int) -> dict[str, Any]:
             f"有 {len(matches)} 个桌面都叫「{text}」，无法确定是哪一个；请改用其中一个 ID：{ids}"
         )
 
-    known = "、".join(f"{d['index'] + 1}={d['name'] or '未命名'}" for d in desktops)
+    known = "、".join(f"{d['index']}={d['name'] or '未命名'}" for d in desktops)
     raise ValueError(f"找不到与 {target!r} 匹配的桌面。现有桌面：{known}")
 
 
@@ -508,7 +512,7 @@ def _do_windows(target: str | int | None) -> dict[str, Any]:
         by_id = {d["desktop_id"]: d for d in desktops}
         for row in rows:
             desktop = by_id.get(row["desktop_id"])
-            row["desktop_index"] = desktop["index"] + 1 if desktop else None
+            row["desktop_index"] = desktop["index"] if desktop else None
             row["desktop_name"] = desktop["name"] if desktop else None
         return {"windows": rows, "count": len(rows)}
 

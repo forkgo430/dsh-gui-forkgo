@@ -641,28 +641,98 @@ def start_host(width: int = 1280, height: int = 720,
     return False, f"等 {timeout:.0f} 秒仍未登录成功", {"host_pid": proc.pid}
 
 
-def stop_host(timeout: float = 20.0) -> tuple[bool, str]:
-    """让宿主断开并退出，子会话随之销毁。"""
-    _, ready_file, stop_file = _host_paths()
+def logoff_session(session_id: int, wait_logon: bool = False) -> tuple[bool, int]:
+    """注销一个会话。返回 (成功, 错误码)。
 
-    if not host_running():
-        return True, "没有运行中的子会话"
+    为什么必须有这一步：RDP 宿主断开只是让会话变成 disconnected，
+    会话本身还活着——explorer、dwm、csrss 全在跑，每个占几百 MB。
+    而且杀了 explorer 三秒就自动重启，因为那是个完整的登录会话。
+    只有注销才能真正清掉。
 
-    try:
-        with open(stop_file, "w", encoding="utf-8") as f:
-            f.write("stop")
-    except OSError as e:
-        return False, f"写停止标记失败: {e}"
+    ``wait_logon=False`` 表示不等登录完成（子会话没有登录界面，
+    等它反而是浪费时间），传 True 时会阻塞到会话真正退出。
+    """
+    _wts.WTSLogoffSession.argtypes = [wt.HANDLE, wt.DWORD, wt.BOOL]
+    _wts.WTSLogoffSession.restype = wt.BOOL
+    ok = _wts.WTSLogoffSession(None, wt.DWORD(session_id),
+                                wt.BOOL(wait_logon))
+    if ok:
+        return True, 0
+    return False, ctypes.get_last_error()
 
+
+def wait_session_gone(session_id: int, timeout: float = 20.0) -> bool:
+    """等某个会话彻底从会话列表里消失。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not host_running():
-            for p in (ready_file, stop_file):
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-            return True, "子会话已关闭"
+        if not any(sid == session_id for sid, _, _ in list_sessions()):
+            return True
         time.sleep(0.4)
+    return False
 
-    return False, f"等 {timeout:.0f} 秒子会话仍未关闭"
+
+def stop_host(timeout: float = 30.0) -> tuple[bool, str]:
+    """关掉子会话。
+
+    三步，缺一不可：
+      1. 写停止标记，让 RDP 宿主自己断开并退出
+      2. **注销会话**——宿主断开只是让会话变 disconnected，不注销的话
+         那 30 多个进程会一直留着
+      3. 等会话真的从列表里消失
+
+    之前只做了第 1 步就报「已关闭」，于是 start/stop 反复跑会不断堆积
+    孤儿会话，每个几百 MB。
+    """
+    _, ready_file, stop_file = _host_paths()
+
+    # 先记下当前有哪些子会话，注销时按这个名单来
+    targets = [sid for sid, _, _ in list_sessions() if sid >= 2]
+    host_alive = host_running()
+
+    if not targets and not host_alive:
+        return True, "没有运行中的子会话"
+
+    # 第 1 步：让宿主断开
+    if host_alive:
+        try:
+            with open(stop_file, "w", encoding="utf-8") as f:
+                f.write("stop")
+        except OSError as e:
+            return False, f"写停止标记失败: {e}"
+
+        deadline = time.time() + min(timeout / 2, 10.0)
+        while time.time() < deadline and host_running():
+            time.sleep(0.3)
+
+    # 第 2 步：注销会话。重新扫一遍，把宿主断开后残留的也算上。
+    to_logoff = {sid for sid, _, _ in list_sessions() if sid >= 2} | set(targets)
+    logged_off = []
+    failed = []
+    for sid in sorted(to_logoff):
+        ok, err = logoff_session(sid)
+        if ok:
+            logged_off.append(sid)
+        else:
+            failed.append(f"{sid}(err={err})")
+
+    # 第 3 步：等它们真的消失
+    still = []
+    for sid in to_logoff:
+        if not wait_session_gone(sid, timeout=max(5.0, timeout / max(1, len(to_logoff)))):
+            still.append(sid)
+
+    # 收尾：清掉标记文件
+    for p in (ready_file, stop_file):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    if still:
+        return False, (f"注销了 {logged_off or '无'}，但这些会话仍在：{still}"
+                       + (f"；注销失败：{', '.join(failed)}" if failed else ""))
+    if failed:
+        return False, f"注销失败：{', '.join(failed)}"
+    if logged_off:
+        return True, f"子会话已注销：{logged_off}"
+    return True, "没有需要注销的子会话"

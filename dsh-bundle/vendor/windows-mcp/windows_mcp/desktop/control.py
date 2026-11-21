@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import math
 import queue
 import threading
 import time
 from typing import Callable
+
+logger = logging.getLogger(__name__)
+
 from windows_mcp.desktop.control_context import (
     current_token,
     current_steps,
@@ -453,6 +457,21 @@ class ControlCoordinator:
             result = self._snapshot_locked(now)
         if changed:
             self._notify(result)
+        # 交还控制权后清掉截图缓存——**不看 changed**。
+        #
+        # 控制权在 AI 手上时，渐变光和提示面板会画进截图里；交还后那些装饰消失，
+        # 但帧哈希缓存还留着「上一帧」。下次截图如果画面碰巧命中旧帧，就会把
+        # 带光晕的旧图当成当前画面返回，看起来像光效卡死了。
+        #
+        # 为什么不能放在 `if changed:` 里面：那个条件要求 state 恰好是 "ai"。
+        # 实测里 release() 被调用时 state 往往是 "unavailable" 或已经是 "ready"，
+        # changed 为 False，清理就被跳过了——而用户正是在这时候发现旧图还在。
+        # 清缓存很便宜（一次字典 clear），无条件执行没有代价。
+        try:
+            from windows_mcp.desktop.frame_cache import get_frame_cache
+            get_frame_cache().clear()
+        except Exception:  # noqa: BLE001 — 清缓存失败不该影响交还控制权
+            logger.debug("交还控制权后清截图缓存失败", exc_info=True)
         return result
 
     def start(self) -> None:
