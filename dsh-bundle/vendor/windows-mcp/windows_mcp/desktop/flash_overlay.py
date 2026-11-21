@@ -462,6 +462,98 @@ def _push_bitmap(hwnd, x: int, y: int, w: int, h: int, bgra: bytes, *, opacity: 
         _user32.ReleaseDC(None, screen_dc)
 
 
+def create_surface(width: int, height: int, bgra: bytes):
+    """Allocate one memory DC plus DIB section for a layered window, once.
+
+    The control indicator repaints its opacity about twenty times a second.
+    Building a compatible DC and a DIB section per frame churned GDI until
+    ``CreateDIBSection`` returned NULL on a memory-tight host, which killed the
+    indicator thread and dropped the AI control lease. Callers now allocate per
+    window and reuse the section through :func:`update_surface`.
+    """
+    screen_dc = _user32.GetDC(None)
+    if not screen_dc:
+        raise OSError("GetDC failed")
+    mem_dc = None
+    hbm = None
+    try:
+        mem_dc = _gdi32.CreateCompatibleDC(screen_dc)
+        if not mem_dc:
+            raise OSError("CreateCompatibleDC failed")
+        bmi = _BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = width
+        bmi.bmiHeader.biHeight = -height  # top-down DIB
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = _BI_RGB
+        if len(bgra) != width * height * 4:
+            raise OSError("bitmap buffer does not match its dimensions")
+        bits_ptr = ctypes.c_void_p()
+        hbm = _gdi32.CreateDIBSection(
+            screen_dc,
+            ctypes.byref(bmi),
+            _DIB_RGB_COLORS,
+            ctypes.byref(bits_ptr),
+            None,
+            0,
+        )
+        if not hbm:
+            raise OSError("CreateDIBSection failed")
+        old_bmp = _gdi32.SelectObject(mem_dc, hbm)
+        if not old_bmp:
+            raise OSError("SelectObject failed")
+        ctypes.memmove(bits_ptr, bgra, len(bgra))
+        return mem_dc, hbm, bits_ptr, old_bmp
+    except BaseException:
+        if hbm:
+            _gdi32.DeleteObject(hbm)
+        if mem_dc:
+            _gdi32.DeleteDC(mem_dc)
+        raise
+    finally:
+        _user32.ReleaseDC(None, screen_dc)
+
+
+def update_surface(
+    hwnd, x: int, y: int, w: int, h: int, mem_dc, *, opacity: int = 255
+) -> None:
+    """Blit an existing DIB surface to a layered window without reallocating."""
+    pos = _POINT(x, y)
+    size = _SIZE(w, h)
+    src_pos = _POINT(0, 0)
+    blend = _BLENDFUNCTION(_AC_SRC_OVER, 0, opacity, _AC_SRC_ALPHA)
+    if not _user32.UpdateLayeredWindow(
+        hwnd,
+        None,
+        ctypes.byref(pos),
+        ctypes.byref(size),
+        mem_dc,
+        ctypes.byref(src_pos),
+        0,
+        ctypes.byref(blend),
+        _ULW_ALPHA,
+    ):
+        raise OSError(f"UpdateLayeredWindow failed: {ctypes.get_last_error()}")
+
+
+def write_surface(bits_ptr, bgra: bytes, w: int, h: int) -> None:
+    """Replace the pixels of an allocated DIB surface in place."""
+    if len(bgra) != w * h * 4:
+        raise OSError("bitmap buffer does not match its dimensions")
+    ctypes.memmove(bits_ptr, bgra, len(bgra))
+
+
+def destroy_surface(mem_dc, hbm, old_bmp) -> None:
+    """Release the DC and DIB section created by :func:`create_surface`."""
+    if mem_dc and old_bmp:
+        _gdi32.SelectObject(mem_dc, old_bmp)
+    if hbm:
+        _gdi32.DeleteObject(hbm)
+    if mem_dc:
+        _gdi32.DeleteDC(mem_dc)
+
+
 def _pump_messages(hwnd) -> None:
     msg = wintypes.MSG()
     while _user32.PeekMessageW(ctypes.byref(msg), hwnd, 0, 0, _PM_REMOVE):

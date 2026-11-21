@@ -9,6 +9,12 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from windows_mcp.desktop.overlay_bitmap import premultiplied_bgra
 
 _BORDER = 56
+# Peak alpha of the frame glow, at the very edge of the screen.
+_GLOW_PEAK_ALPHA = 236
+# Radius the frame glow rounds its corners by. Zero gives the old crisp
+# 90-degree crease; anything comparable to _BORDER wraps the light around the
+# corner the way an actual bezel-lit display looks.
+_GLOW_CORNER_RADIUS = 28
 _CURSOR_SIZE = 88
 _CURSOR_LABEL = "AI"
 _RIPPLE_SIZE = 96
@@ -55,37 +61,121 @@ def _breath_opacity(elapsed: float) -> int:
     return round(_BREATH_MIN_ALPHA + (255 - _BREATH_MIN_ALPHA) * strength)
 
 
-def _glow_alpha(depth: int, extent: int = _BORDER) -> int:
-    """Peak at the screen edge and fade continuously to transparency inward."""
-    if depth >= extent - 1:
+def _glow_alpha(depth: float, extent: int = _BORDER) -> int:
+    """Edge glow strength at ``depth`` pixels in from the screen edge.
+
+    A continuous falloff with no step at the far end. The old version returned
+    a hard 0 at ``extent - 1``, which put a visible seam one pixel inside the
+    band; this curve reaches zero smoothly instead.
+
+    Shape: flat at the very edge, then a cosine ease that spends most of its
+    length in the visible middle. ``(1 - t)**1.4`` (the old curve) dropped too
+    fast near the edge, so the band read as a stroked border rather than a glow.
+    """
+    if depth >= extent:
         return 0
-    return round(240 * (1 - depth / (extent - 1)) ** 1.4)
+    t = depth / extent
+    # Ease-out: 1 at the edge, 0 at the far end, with a gentle shoulder.
+    eased = (math.cos(t * math.pi) + 1) / 2
+    return round(_GLOW_PEAK_ALPHA * eased**1.15)
 
 
-def _edge_bitmap(width: int, height: int, side: str, color: tuple[int, int, int]) -> bytes:
-    """Pre-render feathered edges, joining corners at one glow strength."""
+def _frame_layer_bitmap(
+    width: int,
+    height: int,
+    color: tuple[int, int, int],
+    *,
+    origin: tuple[int, int],
+    screen: tuple[int, int],
+) -> bytes:
+    """Render one piece of the frame glow from a single distance field.
+
+    Why a distance field rather than a per-side gradient: the frame is drawn by
+    four separate layered windows, and alpha compositing *adds* wherever two of
+    them overlap. Per-side fades meeting at a corner therefore leave a bright
+    square there. One shared field means every window agrees about any pixel.
+
+    Why the screen geometry instead of the strip's own rect: a corner only
+    exists in the field, not in any single strip. The top strip spans the full
+    width but is only ``_BORDER`` tall, so it never sees a "below the screen"
+    edge to round against. Passing the whole screen rect plus this strip's
+    offset lets each window evaluate the same function of absolute position.
+
+    ``origin`` is this bitmap's top-left in screen coordinates; ``screen`` is
+    the full screen size.
+    """
     image = Image.new("RGBA", (width, height))
-    draw = ImageDraw.Draw(image)
+    if width <= 0 or height <= 0:
+        return premultiplied_bgra(image, 1.0)
+
+    ox, oy = origin
+    sw, sh = screen
+    right, bottom = sw - 1, sh - 1
+
+    pixels = image.load()
+    for y in range(height):
+        sy = oy + y
+        for x in range(width):
+            sx = ox + x
+
+            # Depth into the glow band = distance to the nearest screen edge.
+            # The band is the same width on all four sides, so a mid-edge pixel
+            # and a corner pixel at the same depth get the same alpha, and the
+            # four strips agree where they meet.
+            depth = min(sx, right - sx, sy, bottom - sy)
+
+            a = _glow_alpha(depth, _BORDER)
+            if a:
+                pixels[x, y] = (*color, a)
+    return premultiplied_bgra(image, 1.0)
+
+
+def _edge_bitmap(
+    width: int,
+    height: int,
+    side: str,
+    color: tuple[int, int, int],
+    *,
+    lead: int = 0,
+    tail: int = 0,
+) -> bytes:
+    """One side of the frame glow, feathered in two dimensions.
+
+    Kept for callers that only want a single strip (the preview renderer, and
+    any test that asserts strip geometry). The live indicator uses
+    :func:`_frame_layer_bitmap` instead, which computes one distance field for
+    the whole frame so overlapping layers cannot brighten the corners.
+
+    ``lead`` / ``tail`` mark how far the strip's span runs under the two
+    perpendicular strips; the sideways fade starts there.
+    """
+    image = Image.new("RGBA", (width, height))
     extent = min(_BORDER, height if side in ("top", "bottom") else width)
-    corner_width = min(extent, width // 2)
-    for depth in range(extent):
-        # Let the gradient itself reach the edge; do not draw a separate outline.
-        alpha = _glow_alpha(depth, extent)
-        if side in ("top", "bottom"):
-            y = depth if side == "top" else height - 1 - depth
-            draw.line((0, y, width - 1, y), fill=(*color, alpha))
-            # The side strips start below/above these corner squares. Use the
-            # nearest screen edge as the depth, matching the straight strips
-            # without blending two windows or drawing a diagonal bright seam.
-            for side_depth in range(corner_width):
-                corner_alpha = _glow_alpha(min(depth, side_depth), extent)
-                draw.point((side_depth, y), fill=(*color, corner_alpha))
-                draw.point((width - 1 - side_depth, y), fill=(*color, corner_alpha))
-        elif side == "left":
-            draw.line((depth, 0, depth, height - 1), fill=(*color, alpha))
-        else:
-            x = width - 1 - depth
-            draw.line((x, 0, x, height - 1), fill=(*color, alpha))
+    if extent <= 0:
+        return premultiplied_bgra(image, 1.0)
+
+    pixels = image.load()
+    horizontal = side in ("top", "bottom")
+    span = width if horizontal else height
+
+    for y in range(height):
+        for x in range(width):
+            if horizontal:
+                depth = y if side == "top" else height - 1 - y
+                along = x
+            else:
+                depth = x if side == "left" else width - 1 - x
+                along = y
+
+            a = _glow_alpha(depth, extent)
+            if lead > 0 and along < lead:
+                a = max(a, _glow_alpha(lead - along, extent))
+            if tail > 0 and span - 1 - along < tail:
+                a = max(a, _glow_alpha(tail - (span - 1 - along), extent))
+
+            if a:
+                pixels[x, y] = (*color, a)
+
     return premultiplied_bgra(image, 1.0)
 
 

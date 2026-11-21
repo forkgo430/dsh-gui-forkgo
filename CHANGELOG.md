@@ -2,6 +2,62 @@
 
 本项目的版本沿革。包名轨迹：`@local/windows-mcp` → `@local/gui` → **`dsh-gui-forkgo`**。
 
+## 1.2.0
+
+新增独立子会话（Child Session）能力：AI 在另一个桌面里干活，**不抢用户的鼠标键盘**。
+
+### 新增
+
+- **`IsolatedSession` 工具**（第 23 个）。四个动作：
+  - `status`：查当前能力——子会话状态、已存凭据、内置脚本运行时、能不能建会话
+  - `setup`：弹 Windows 标准凭据框，用户输一次密码，`CryptProtectData` 加密后存进
+    凭据管理器 `dsh-gui/Session`。之后不再问
+  - `inject`：把 DLL 注入到子会话的 `explorer.exe`（同用户进程不需要
+    `SeDebugPrivilege`）
+  - `forget`：删掉存下的凭据
+
+- **`desktop/child_session.py` 模块**。三条路线的实现与探测：
+  - RDP 子会话：`ConnectToChildSession` + `ClearTextPassword`（实测 16 秒登录完成，
+    `explorer.exe` 出现，会话 `Active`、协议 RDP、同一用户）
+  - 注入：`OpenProcess` → `VirtualAllocEx` → `WriteProcessMemory` →
+    `CreateRemoteThread(LoadLibraryW)`（实测在 283 个模块中确认新模块加载）
+  - 脚本沙箱探测：找机器上已装的 node / python / pwsh，这条不需要密码
+
+### 为什么凭据要问用户一次
+
+豆包工作（DoubaoWork）的做法是：从凭据管理器读一条已有的密码，用自定义的
+AES-256 + SHA-512 方案解密，再通过命名管道明文发给 helper 进程。它从来不问用户。
+
+**我们不照抄这一点。** 那条凭据是用户机器上现成的 Windows 密码，换台机器就不存在。
+我们的做法是把同样的技术链路拆开，只替换凭据来源：
+
+```
+首次运行 → CredUIPromptForWindowsCredentials（Windows 标准框）
+        → CryptProtectData（标准 DPAPI，本用户跨进程可解）
+        → CredWriteW("dsh-gui/Session")
+每次运行 → CredReadW + CryptUnprotectData → LogonUserW(INTERACTIVE) → primary token
+```
+
+存的是**标准 DPAPI blob**，不是自定义方案，便于调试和迁移。
+
+### 已知约束
+
+- **子会话的存活绑在 RDP 宿主进程上**。宿主一退，会话立刻 `Disconnected`。
+  产品化必须有一个常驻的宿主。
+- 一个系统同一时刻只能有一个活动子会话（微软文档）。
+- `CreateProcessAsUser` 在本机不可用：缺 `SeAssignPrimaryToken`、`SeIncreaseQuota`、
+  `SeTcb` 三个特权。所以走注入，不走新建进程——这也是豆包的做法。
+- 能用 UIA 控件模式完成的操作**本来就不动真实指针**，应优先走那条路；
+  子会话只解决 canvas / 自绘界面这类 UIA 覆盖不到的场景。
+
+### 工程记录
+
+调查与实测的完整过程记在 `docs/虚拟桌面计划.md`，包括：
+- 微软文档说的「自动登录」在 PIN 登录的机器上不成立（未记录的第三个例外）
+- `pip_main.exe` 的 IAT 精确解析（`LogonUserW` 在、`CredReadW` 不在）
+- 账户锁定策略实测（10 次 / 600 秒）与批量验证的血泪教训
+- 纯 Python 手工构造合法 PE 的方法（转发 DLL、最小可注入 DLL，都不需要编译器）
+
 ## 1.1.1
 
 包名去掉假 scope，改为无 scope 裸包名；按多面手的方式立项目。

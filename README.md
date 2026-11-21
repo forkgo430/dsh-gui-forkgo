@@ -40,7 +40,7 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 
 ## 提供什么
 
-服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 22 个：
+服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 23 个：
 
 | 能力 | 工具 | 说明 |
 |---|---|---|
@@ -51,8 +51,9 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 | 文件与系统 | `FileSystem` · `Registry` · `PowerShell` · `Clipboard` · `Scrape` · `Notification` | |
 | 控制权 | `ControlStatus` | 谁在控制、空闲多久交还 |
 | **虚拟桌面** | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 |
+| **隔离会话** | **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘。`status` 查能力、`setup` 存密码一次、`inject` 注入 DLL、`forget` 删凭据 |
 
-另有一份技能 `gui-desktop`，说明这 22 个工具的使用顺序。
+另有一份技能 `gui-desktop`，说明这些工具的使用顺序。
 
 ### 三处实现上的取舍
 
@@ -73,7 +74,27 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 └─────────────────────────────────────┘
 ```
 
-接管方式有两种：大幅移动鼠标，或按 `Ctrl + Alt + Shift + Backspace`。
+接管方式有两种：大幅移动鼠标，或按 `Ctrl + Alt + Shift + Bac
+
+**`IsolatedSession` 也是本仓加的（1.2.0）。**
+
+它解决的是「AI 抢鼠标键盘」这个具体问题。做法是在同一台机器上开一个**子会话**
+（Windows 的 Child Session），AI 在那个桌面里操作，你的桌面完全不受影响。
+
+要一次 Windows 密码：首次 `setup` 会弹系统标准凭据框，密码用当前账户的 DPAPI
+加密后存进凭据管理器 `dsh-gui/Session`，之后不再问。存的是**标准 DPAPI blob**，
+不是自定义方案。
+
+三点已知约束，先说在前面：
+
+- **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。所以产品化需要一个常驻宿主。
+- 一个系统同一时刻只能有一个活动子会话。
+- **能用 UIA 控件模式做的事本来就不动真实指针**，那些场景不需要子会话。
+  子会话只解决 canvas、自绘界面这类 UIA 覆盖不到的情况。
+
+调查与实测的完整记录（含微软文档没写的那条例外、注入链路验证、账户锁定的教训）
+在 [`docs/虚拟桌面计划.md`](docs/虚拟桌面计划.md)。
+kspace`。
 面板在 1920 宽的屏上约 398×114，占屏幕 21%×11%；窄屏自动缩到 276×97。
 
 ## 环境要求
@@ -154,7 +175,7 @@ npm run selftest:offline   # 只验结构与技能
    `PYTHONPATH` 是不是由 `!!js` 反解而不是写死的绝对路径、`vendor/` 是不是完整的源码树。
 2. **技能 frontmatter** —— `name` 是否为 kebab-case 且与目录名一致、`description` 是否为空。
    缺 description 时 dsh 不会加载，也不报错，表现是「AI 不会用」。
-3. **连接层** —— 真起 stdio、列工具，确认 22 个工具里 `VirtualDesktop` 在、屏幕文案是中文。
+3. **连接层** —— 真起 stdio、列工具，确认 23 个工具里 `VirtualDesktop` 在、屏幕文案是中文。
 
 ## 与上游的关系
 

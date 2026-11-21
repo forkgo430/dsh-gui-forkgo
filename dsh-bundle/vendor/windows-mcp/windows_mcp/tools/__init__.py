@@ -15,6 +15,7 @@ from windows_mcp.tools import (
     shell,
     snapshot,
     virtual_desktop,
+    virtual_desktop_session,
 )
 
 _MODULES = [
@@ -32,6 +33,7 @@ _MODULES = [
     notification,
     registry,
     virtual_desktop,
+    virtual_desktop_session,
 ]
 
 

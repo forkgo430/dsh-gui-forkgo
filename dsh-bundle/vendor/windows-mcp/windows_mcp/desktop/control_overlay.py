@@ -22,6 +22,7 @@ from windows_mcp.desktop.control_overlay_art import (
     _breath_opacity,
     _cursor_bitmap,
     _edge_bitmap,
+    _frame_layer_bitmap,
     _notice_bitmap,
     _notice_glow_bitmap,
     _ripple_frames,
@@ -51,6 +52,16 @@ _user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
 _user32.IsWindowVisible.argtypes = [wintypes.HWND]
 _user32.IsWindowVisible.restype = wintypes.BOOL
 
+_affinity_warned = False
+
+
+def _warn_display_affinity() -> None:
+    """Warn once: the failure repeats per layer and used to flood the log."""
+    global _affinity_warned
+    if not _affinity_warned:
+        _affinity_warned = True
+        logger.warning("display affinity unavailable for AI control indicator")
+
 
 class _Layer:
     def __init__(
@@ -72,12 +83,16 @@ class _Layer:
         )
         self.bgra = bgra
         self.opacity: int | None = None
+        # One DIB section per window, reused for every later frame. Allocating
+        # per frame is what exhausted GDI and broke the indicator.
+        self.surface: tuple | None = None
         try:
-            flash_overlay._push_bitmap(self.hwnd, x, y, width, height, bgra)
+            self.surface = flash_overlay.create_surface(width, height, bgra)
+            flash_overlay.update_surface(self.hwnd, x, y, width, height, self.surface[0])
             if not _user32.SetWindowDisplayAffinity(self.hwnd, _WDA_EXCLUDEFROMCAPTURE):
                 # Own screenshots are protected by suspend_for_capture. Affinity
                 # varies by Windows compositor and only affects other capturers.
-                logger.warning("display affinity unavailable for AI control indicator")
+                _warn_display_affinity()
         except BaseException:
             self.close()
             raise
@@ -86,10 +101,19 @@ class _Layer:
         """Modulate an existing bitmap without rebuilding its per-pixel glow."""
         if self.opacity == opacity:
             return
+        if self.surface is None:
+            raise RuntimeError("AI control indicator surface is unavailable")
         # Use the bitmap API for every frame. SetLayeredWindowAttributes can
         # report success here while replacing the visible per-pixel bitmap.
-        flash_overlay._push_bitmap(
-            self.hwnd, self.x, self.y, self.width, self.height, self.bgra, opacity=opacity
+        # The pixels are unchanged, so only the blend alpha is re-sent.
+        flash_overlay.update_surface(
+            self.hwnd,
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            self.surface[0],
+            opacity=opacity,
         )
         self.opacity = opacity
 
@@ -111,7 +135,10 @@ class _Layer:
 
     def draw(self, bgra: bytes, x: int, y: int) -> None:
         """Replace the bitmap and position in one update, for animation frames."""
-        flash_overlay._push_bitmap(self.hwnd, x, y, self.width, self.height, bgra)
+        if self.surface is None:
+            raise RuntimeError("AI control indicator surface is unavailable")
+        flash_overlay.write_surface(self.surface[2], bgra, self.width, self.height)
+        flash_overlay.update_surface(self.hwnd, x, y, self.width, self.height, self.surface[0])
         self.x, self.y, self.bgra, self.opacity = x, y, bgra, 255
 
     def hide(self) -> None:
@@ -135,6 +162,9 @@ class _Layer:
         self.x, self.y = x, y
 
     def close(self) -> None:
+        if self.surface is not None:
+            flash_overlay.destroy_surface(self.surface[0], self.surface[1], self.surface[3])
+            self.surface = None
         if self.hwnd:
             _user32.DestroyWindow(self.hwnd)
             _user32.UnregisterClassW(self.class_name, self.instance)
@@ -169,18 +199,37 @@ def _build_layers(
             border = min(_BORDER, width // 2, height // 2)
             if border <= 0:
                 raise RuntimeError("display too small for AI control indicator")
+            # Four non-overlapping strips that tile the frame exactly. Each one
+            # is handed the full screen rectangle in screen coordinates, not its
+            # own cropped rect: the corner arc has to be evaluated against the
+            # screen, and a strip only sees half of any corner it touches.
+            #
+            # Non-overlapping matters because these are alpha-composited
+            # layered windows — two windows covering one pixel add up and leave
+            # a bright square at each corner.
             strips = (
-                (left, top, width, border, "top"),
-                (left, bottom - border, width, border, "bottom"),
-                # The horizontal bitmaps include corner glow, leaving these
-                # vertical strips separate so corners are not blended twice.
-                (left, top + border, border, height - 2 * border, "left"),
-                (right - border, top + border, border, height - 2 * border, "right"),
+                (0, 0, width, border),
+                (0, height - border, width, border),
+                (0, border, border, height - 2 * border),
+                (width - border, border, border, height - 2 * border),
             )
-            for x, y, w, h, side in strips:
-                if w and h:
+            for sx, sy, sw, sh in strips:
+                if sw and sh:
                     layers.append(
-                        _Layer(x, y, w, h, _edge_bitmap(w, h, side, color), f"{index}_{side}")
+                        _Layer(
+                            left + sx,
+                            top + sy,
+                            sw,
+                            sh,
+                            _frame_layer_bitmap(
+                                sw,
+                                sh,
+                                color,
+                                origin=(sx, sy),
+                                screen=(width, height),
+                            ),
+                            f"{index}_{sx}_{sy}",
+                        )
                     )
                     if beat is not None:
                         beat()
@@ -263,6 +312,23 @@ class _Indicator:
         if self.error or not self.thread.is_alive():
             raise RuntimeError("AI control indicator thread failed at startup") from self.error
 
+    def _restart(self) -> None:
+        """Rebuild a dead window owner; the caller holds ``self.condition``."""
+        if self.thread.is_alive():
+            return
+        self.error = None
+        self.missed_ack = False
+        self.heartbeat = 0.0
+        self.started = threading.Event()
+        self.thread = threading.Thread(
+            target=self._run, name="windows-mcp-control-indicator", daemon=True
+        )
+        self.thread.start()
+        if not self.started.wait(timeout=3.0):
+            raise RuntimeError("AI control indicator restart timed out")
+        if not self.thread.is_alive():
+            raise RuntimeError("AI control indicator restart failed") from self.error
+
     def change(
         self,
         *,
@@ -279,6 +345,11 @@ class _Indicator:
                 return False
             if self.stopping:
                 raise RuntimeError("AI control indicator is stopping")
+            if self.error or not self.thread.is_alive():
+                # One failed frame used to disable AI control for the rest of
+                # the session. Rebuild the window owner once, then report the
+                # failure only if it cannot come back.
+                self._restart()
             if self.error:
                 raise RuntimeError("AI control indicator failed") from self.error
             if not self.thread.is_alive():

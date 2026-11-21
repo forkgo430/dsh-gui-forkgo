@@ -318,6 +318,15 @@ async function checkConnect() {
     if (names.includes('VirtualDesktop')) ok('VirtualDesktop 在（本地分支生效）');
     else bad('VirtualDesktop 不在：PYTHONPATH 未生效，跑的是 PyPI 上游 21 工具版');
 
+    // 1.2.0 新增：独立子会话（不抢用户鼠标键盘）
+    if (names.includes('IsolatedSession')) ok('IsolatedSession 在（1.2.0 子会话能力）');
+    else bad('IsolatedSession 不在：tools/__init__.py 未注册或模块导入失败');
+
+    // 工具名不能重复——重名会让后注册的那个被静默覆盖
+    const dups = names.filter((n, i) => names.indexOf(n) !== i);
+    if (dups.length) bad(`工具名重复：${[...new Set(dups)].join(', ')}`);
+    else ok('工具名无重复');
+
     // 屏幕提示必须已是中文；这是本分支的改动之一
     if (pythonPath) {
       const art = join(pythonPath, 'windows_mcp', 'desktop', 'control_overlay_art.py');

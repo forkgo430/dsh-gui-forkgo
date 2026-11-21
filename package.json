@@ -1,6 +1,6 @@
 {
   "name": "dsh-gui-forkgo-monorepo",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "DSH 的图形层 —— 让 AI 直接操控整台 Windows 机器。22 个工具 + 一份按顺序使用的技能，含虚拟桌面与中文屏幕提示。",
   "private": true,
   "author": "赢容",
