@@ -1719,7 +1719,11 @@ class Desktop:
             with control_overlay.suspend_for_capture():
                 if not flash_overlay.cancel_active_flash():
                     raise RuntimeError("Previous screenshot flash did not close before capture")
-                image, used_backend = screenshot_capture.capture(capture_rect)
+                # 走 capture_with_hash：帧哈希记进缓存，显示器布局/DPI 变了就清掉。
+                # 直接用 capture() 的话，frame_cache 与 display_watcher 永远不会被触碰——
+                # ControlStatus 里那两项会一直是 0，看起来像没实现。
+                image, used_backend, _digest, _same = (
+                    screenshot_capture.capture_with_hash(capture_rect))
                 self._last_screenshot_backend = used_backend
             restored = True
         finally:
