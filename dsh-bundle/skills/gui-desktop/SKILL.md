@@ -12,7 +12,7 @@ metadata:
 
 > 作者：赢容（与「WPS 多面手」同一位作者）
 
-工具不缺（22 个，`mcp__gui__*`），缺的是**按什么顺序用**。
+工具不缺（15 个，`mcp__gui__*`），缺的是**按什么顺序用**。
 本技能只管顺序和判断，不重复工具清单 —— 清单会过期，以 `tools/list` 为准。
 
 ## 什么时候用 / 不用
@@ -134,6 +134,6 @@ metadata:
 
 ## 参考
 
-- 工具清单与参数：`tools/list`（22 个，别凭记忆写参数名）
+- 工具清单与参数：`tools/list`（15 个，别凭记忆写参数名）
 - 屏幕提示文案（蓝光/顶部面板/接管确认框）改在哪：`vendor/windows-mcp/windows_mcp/desktop/control_overlay_art.py`
   与 `control_consent.py`，都在本 bundle 内

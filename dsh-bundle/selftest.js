@@ -3,7 +3,7 @@
  * Output: 结构自检 + 技能自检 + 连接层自检；失败 exit 1
  * Pos: dsh-bundle 的自检脚本。**不需要 dsh**，只验三件 bundle 最容易坏的事：
  *      ① 包结构符合 dsh 的 bundle 规范；② skills/ 里那份技能能被 dsh 认出来；
- *      ③ windows-mcp 起得来、22 个工具列得出来、名字合 dsh 的字符集。
+ *      ③ windows-mcp 起得来、15 个工具列得出来、名字合 dsh 的字符集。
  *
  * 用法：node selftest.js
  *       node selftest.js --no-connect   （只跑结构+技能，不启动 MCP 子进程）
@@ -303,7 +303,15 @@ async function checkConnect() {
       bad('工具数为 0：server 起来了但没列工具');
       return;
     }
-    ok(`工具数：${tools.length}`);
+    // 期望工具数。改合并方式时同步改这里；CI 的 docs job 从这一行读数字，
+    // 拿它去核对 README 有没有写漂，省得同一个数字散落在三处各改一遍。
+    const EXPECTED_TOOL_COUNT = 15;
+    if (tools.length !== EXPECTED_TOOL_COUNT) {
+      bad(`工具数 ${tools.length}，期望 ${EXPECTED_TOOL_COUNT}`
+          + '：多了少了都说明合并或注册出了问题');
+    } else {
+      ok(`工具数：${tools.length}`);
+    }
 
     const names = tools.map((t) => t.name);
     const illegal = names.filter((n) => !/^[A-Za-z0-9_-]+$/.test(n));

@@ -6,17 +6,17 @@
 
 ## 提供什么
 
-服务器名固定为 `gui`，工具名形如 `mcp__gui__<tool>`，共 22 个：
+服务器名固定为 `gui`，工具名形如 `mcp__gui__<tool>`，共 15 个：
 
 | 能力 | 工具 | 说明 |
 |---|---|---|
 | 观察 | `Snapshot`、`Screenshot`、`DisplayInventory` | 截当前屏幕、取控件树拿到可点击元素的坐标与名称、读显示器与 DPI |
-| 鼠标 | `Click`、`Move`、`Scroll`、`MultiSelect` | 点击、双击、右键、按坐标移动、拖拽、滚轮 |
-| 键盘 | `Type`、`Shortcut`、`MultiEdit` | 输入文本、按单键、组合快捷键、批量填多格 |
-| 窗口与程序 | `App`、`Process`、`Wait`、`WaitFor` | 启动程序、切换/聚焦/调整窗口、等条件成立 |
+| 输入 | `Input` | 一个入口，`action` 分发：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit。点击、双击、右键、移动、拖拽、滚轮、输入文本、组合键、批量填多格都在这里 |
+| 窗口与程序 | `App`、`Process` | 启动程序、切换/聚焦/调整窗口、查进程 |
 | 文件与系统 | `FileSystem`、`Registry`、`PowerShell`、`Clipboard`、`Scrape`、`Notification` | 读写文件、改注册表、执行命令、剪贴板、抓网页、发通知 |
-| 控制权 | `ControlStatus` | 谁在控制桌面、空闲多少秒后交还 |
+| 控制权 | `ControlStatus` | 谁在控制桌面、空闲多少秒后交还、截图缓存与预热状态 |
 | 虚拟桌面 | `VirtualDesktop` | 任务栏上那几组窗口：列出、新建、切换、重命名、删除、把窗口挪过去 |
+| 隔离会话 | `IsolatedSession` | 独立子会话，AI 在另一个桌面里操作，不抢鼠标键盘。`status` 查能力、`setup` 存密码、`start`/`stop` 起停宿主、`inject` 注入 DLL、`forget` 删凭据 |
 
 和内置 `pwsh` 工具的分工：`pwsh` 是命令行层（改文件、跑脚本、抓日志），GUI 是图形层（点安装向导、读弹窗、处理只有 GUI 才有的流程）。
 

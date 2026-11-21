@@ -4,7 +4,7 @@
 
 DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务器 `windows-mcp`，把 Windows 的 UI Automation 和窗口管理包装成一组工具，模型就能像人一样看屏幕、点按钮、敲键盘、切换窗口、管理虚拟桌面。
 
-工具名形如 `mcp__gui__<工具名>`（`serverName: gui`，共 22 个），另带一份技能 `gui-desktop` 教模型按顺序使用。
+工具名形如 `mcp__gui__<工具名>`（`serverName: gui`，共 15 个），另带一份技能 `gui-desktop` 教模型按顺序使用。
 
 ## 装
 
@@ -59,7 +59,7 @@ env:
 ## 改
 
 - 换服务器网关名：`cordis.patch.yml` 里的 `serverName`（工具前缀随之变化，规则 `^[A-Za-z0-9_-]{1,32}$`）
-- 退回纯上游：删掉 `PYTHONPATH` 那段即可（22 个工具会退回 21 个，`VirtualDesktop` 消失）
+- 退回纯上游：删掉 `PYTHONPATH` 那段即可（15 个工具会退回 21 个，`VirtualDesktop` 与 `IsolatedSession` 消失）
 - 命令跑得慢：调 `toolCallTimeoutMs` / `startupTimeoutMs`
 - 不想自动重连：`reconnect.enabled: false`
 
@@ -80,8 +80,9 @@ node selftest.js --no-connect # 只验结构与技能
    `PYTHONPATH` 指向的是完整源码树而不是增量覆盖层。
 2. **技能 frontmatter** —— `name` 是 kebab-case 且与目录名一致、`description` 不为空。
    缺 description 时 dsh 会静默不加载，用户只看到「AI 不会用」，没有任何报错。
-3. **连接层** —— 真起 stdio、`initialize`、`tools/list`，确认 22 个工具里
-   `VirtualDesktop` 在（本地分支生效）、屏幕提示文案是中文、工具名合 dsh 字符集。
+3. **连接层** —— 真起 stdio、`initialize`、`tools/list`，确认 15 个工具里
+   `VirtualDesktop` 与 `IsolatedSession` 都在（本地分支生效）、工具名不重复、
+   屏幕提示文案是中文、名字合 dsh 字符集。
 
 ## 提交
 

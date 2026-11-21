@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/forkgo430/dsh-gui-forkgo/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/dsh-gui-forkgo/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![tools](https://img.shields.io/badge/tools-22-brightgreen.svg)](#提供什么)
+[![tools](https://img.shields.io/badge/tools-15-brightgreen.svg)](#提供什么)
 [![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](#环境要求)
 
 让 AI 操作 Windows 界面：截屏观察、点击、输入、快捷键、窗口与进程、虚拟桌面。
@@ -46,17 +46,19 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 |---|---|---|
 | 观察 | `Snapshot` · `Screenshot` · `DisplayInventory` | 控件树带可点坐标；`use_vision=False` 时只返回文本，不附图 |
 | 输入 | `Input` | 一个入口。`action` 分发：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit |
-| 鼠标 | `Click` · `Move` · `Scroll` · `MultiSelect` | 按坐标或按控件；拖拽、滚轮、多选 |
-| 键盘 | `Type` · `Shortcut` · `MultiEdit` | 输入、快捷键、批量填多格 |
 | 窗口与程序 | `App` · `Process` | 启动、切换、调整窗口、查进程 |
 | 文件与系统 | `FileSystem` · `Registry` · `PowerShell` · `Clipboard` · `Scrape` · `Notification` | |
-| 控制权 | `ControlStatus` | 谁在控制、空闲多久交还 |
+| 控制权 | `ControlStatus` | 谁在控制、空闲多久交还、截图缓存的运行状态 |
 | **虚拟桌面** | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 |
 | **隔离会话** | **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘。`status` 查能力、`setup` 存密码一次、`start`/`stop` 起停常驻宿主、`inject` 注入 DLL、`forget` 删凭据 |
 
 另有一份技能 `gui-desktop`，说明这些工具的使用顺序。
 
-### 三处实现上的取舍
+输入类工具原本是七个（`Click`、`Type`、`Scroll`、`Move`、`Shortcut`、`Wait`、
+`WaitFor`），加上 `MultiSelect`、`MultiEdit` 一共九个。1.2.0 把它们合并成 `Input`
+一个入口，实现函数没有改动，只是外面套了一层按 `action` 分发的壳。
+
+### 四处实现上的取舍
 
 **`Snapshot` 默认不附图。** 只返回控件树，含角色、名称、坐标、可用动作、快捷键。
 坐标可以直接用来点击。canvas、WebGL 和图片里的文字不在控件树里，这些情况才需要开 `use_vision`。
@@ -69,13 +71,19 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 
 ```
 ┌─────────────────────────────────────┐
-│        AI 正在控制这台电脑           │
-│          大幅移动鼠标                │
-│   或按 Ctrl+Alt+Shift+Backspace 接管 │
+│        AI 正在控制这台电脑          │
+│          大幅移动鼠标               │
+│  或按 Ctrl+Alt+Shift+Backspace 接管 │
 └─────────────────────────────────────┘
 ```
 
-接管方式有两种：大幅移动鼠标，或按 `Ctrl + Alt + Shift + Bac
+接管方式有两种：大幅移动鼠标，或按 `Ctrl + Alt + Shift + Backspace`。
+面板在 1920 宽的屏上约 424×118，占屏幕 22%×11%；窄屏自动缩小。
+
+字体用的是等线（`Dengb.ttf` 28px / `Deng.ttf` 19px），不是微软雅黑。
+在本机 412 个字体里挑了几套渲染同一段中文做对比：雅黑的中文笔画在小字号下
+发软，黑体太硬，等线的中英混排最干净。面板不透明度也从 0.80 提到 0.88——
+原来的透明度会让白字透出背景色，笔画边缘发灰。
 
 **`IsolatedSession` 也是本仓加的（1.2.0）。**
 
@@ -105,8 +113,6 @@ IsolatedSession(action="stop")    → 收工，子会话销毁
 
 调查与实测的完整记录（含微软文档没写的那条例外、注入链路验证、账户锁定的教训）
 在 [`docs/虚拟桌面计划.md`](docs/虚拟桌面计划.md)。
-kspace`。
-面板在 1920 宽的屏上约 398×114，占屏幕 21%×11%；窄屏自动缩到 276×97。
 
 ## 环境要求
 
@@ -123,7 +129,7 @@ flowchart LR
     A["DSH<br/>loader"] -->|按包名解析| B["dsh-bundle<br/>只有配置与资产"]
     B -->|spawn| C["uvx"]
     C -->|拉依赖 + PYTHONPATH 覆盖源码| D["windows-mcp<br/>stdio MCP server"]
-    D -->|22 个工具| A
+    D -->|15 个工具| A
     B -->|customSkillDirs| E["gui-desktop<br/>SKILL.md"]
     E --> A
 ```
@@ -133,7 +139,7 @@ bundle 里没有可执行代码，只有配置和资产。实际执行的是 `uv
 ## 边界
 
 **虚拟桌面不隔离输入。** 切换之后鼠标键盘仍然共享，被切走的桌面里进程照常运行、
-照常出声。要真正隔离得用 Terminal Server 子会话，工作量和这个不是一个量级。
+照常出声。要真正隔离得用 `IsolatedSession` 那套子会话。
 
 **Windows 10 19045 上实测到三条限制**，工具会直接拒绝，不返回假成功：
 
@@ -161,6 +167,7 @@ dsh-gui-forkgo/
 │   ├── locale/{zh,en}.json
 │   ├── docs/DETAIL.md
 │   └── selftest.js          结构 + 技能 + 连接层自检
+├── docs/虚拟桌面计划.md      子会话的调查与实测记录
 ├── .github/workflows/ci.yml
 ├── package.json
 ├── CHANGELOG.md
@@ -186,7 +193,8 @@ npm run selftest:offline   # 只验结构与技能
    `PYTHONPATH` 是不是由 `!!js` 反解而不是写死的绝对路径、`vendor/` 是不是完整的源码树。
 2. **技能 frontmatter** —— `name` 是否为 kebab-case 且与目录名一致、`description` 是否为空。
    缺 description 时 dsh 不会加载，也不报错，表现是「AI 不会用」。
-3. **连接层** —— 真起 stdio、列工具，确认 15 个工具里 `VirtualDesktop` 在、屏幕文案是中文。
+3. **连接层** —— 真起 stdio、列工具，确认 15 个工具里 `VirtualDesktop` 与
+   `IsolatedSession` 都在、名字不重复、屏幕文案是中文。
 
 ## 与上游的关系
 
@@ -206,11 +214,14 @@ npm run selftest:offline   # 只验结构与技能
 - 屏幕内容不出本机：没有遥测、没有崩溃上报、没有使用统计
 - 唯一的出站行为是 `uvx` 首次启动时从 PyPI 拉依赖
 - 截图落在 DSH 会话目录下（`.dsh-pilot/` 或你指定的 `save_path`）。敏感窗口不要截
+- `IsolatedSession` 存的密码留在本机凭据管理器里，用当前账户的 DPAPI 加密，
+  不经过网络，也不写进任何配置文件
 
 ## 已知限制
 
 - 只支持 Windows：UI Automation 和虚拟桌面 API 都是 Windows 专有
-- 会占用真实的鼠标键盘。这不是输入隔离，人在键盘前动一下就会互相干扰
+- 默认会占用真实的鼠标键盘，人在键盘前动一下就会互相干扰。用 `IsolatedSession`
+  开子会话可以避免，代价是一次 Windows 密码
 - `PowerShell` 是整机 shell，不受 DSH 文件沙箱限制。删文件、改注册表之前要先说一声
 - canvas、WebGL、游戏画面这类只有像素没有控件树的界面必须走 `use_vision`，
   成本更高，而且要靠看图判断
@@ -220,11 +231,14 @@ npm run selftest:offline   # 只验结构与技能
 | 问题 | 解决方案 |
 |------|---------|
 | 工具列表里没有 `mcp__gui__*` | 确认 `include:gui` 是 active；看插件页有没有启动失败 |
+| 插件显示 failed 但手动能起 | DSH 缓存了失败的连接状态，把插件关掉再打开一次 |
 | `VirtualDesktop` 不存在 | `vendor/windows-mcp` 没被带上，跑的是 PyPI 上游的 21 工具版 |
 | 屏幕提示还是英文 | 同上，`PYTHONPATH` 没指到 `vendor/` 里的源码 |
 | 技能不出现 | 跑 `npm run selftest`；缺 description 会跳过且不报错 |
 | 首次调用很慢 | `uvx` 冷启动要拉 Python 3.14 与依赖，约 5 秒；之后走缓存 |
 | `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp windows-mcp --help` 预热 |
+| `IsolatedSession` 报 1909 | 账户被锁了。本机策略是 10 次失败锁 600 秒，等一会儿或换管理员账户解锁 |
+| `start` 一直不到就绪 | `status` 看 `credential_saved` 是不是 true；看 `%TEMP%\dsh-gui-host-ready.txt` 有没有生成 |
 
 ## 许可
 
