@@ -52,7 +52,7 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 | 文件与系统 | `FileSystem` · `Registry` · `PowerShell` · `Clipboard` · `Scrape` · `Notification` | |
 | 控制权 | `ControlStatus` | 谁在控制、空闲多久交还 |
 | **虚拟桌面** | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 |
-| **隔离会话** | **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘。`status` 查能力、`setup` 存密码一次、`inject` 注入 DLL、`forget` 删凭据 |
+| **隔离会话** | **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘。`status` 查能力、`setup` 存密码一次、`start`/`stop` 起停常驻宿主、`inject` 注入 DLL、`forget` 删凭据 |
 
 另有一份技能 `gui-desktop`，说明这些工具的使用顺序。
 
@@ -88,10 +88,20 @@ plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 
 三点已知约束，先说在前面：
 
-- **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。所以产品化需要一个常驻宿主。
+- **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。`start` 动作会起一个
+  独立的宿主进程（窗口挪到屏幕外，用户看不见），插件重载不影响它。
 - 一个系统同一时刻只能有一个活动子会话。
 - **能用 UIA 控件模式做的事本来就不动真实指针**，那些场景不需要子会话。
   子会话只解决 canvas、自绘界面这类 UIA 覆盖不到的情况。
+
+用法四步：
+
+```
+IsolatedSession(action="setup")   → 弹一次凭据框，存下来
+IsolatedSession(action="start")   → 起宿主建会话，约 5 秒就绪
+IsolatedSession(action="status")  → 确认 state=active、explorer 在
+IsolatedSession(action="stop")    → 收工，子会话销毁
+```
 
 调查与实测的完整记录（含微软文档没写的那条例外、注入链路验证、账户锁定的教训）
 在 [`docs/虚拟桌面计划.md`](docs/虚拟桌面计划.md)。

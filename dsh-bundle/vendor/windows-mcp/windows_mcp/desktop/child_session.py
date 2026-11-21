@@ -28,6 +28,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -371,9 +372,15 @@ def session_info(session_id: int) -> dict:
 
 
 def find_child_explorer() -> Optional[tuple[int, int]]:
-    """返回 (session_id, pid) 或 None"""
+    """返回 (session_id, pid) 或 None。
+
+    只认 state 为 active(0) 或 connected(1) 的会话。断开的会话里 explorer.exe
+    可能还在（进程没死透），但那个会话已经不能用了——拿它去截图或注入
+    都是错的。
+    """
+    active_states = {0, 1}
     for sid, state, _ in list_sessions():
-        if sid < 2:
+        if sid < 2 or state not in ("active", "connected"):
             continue
         for pid, name in session_processes(sid):
             if name.lower() == "explorer.exe":
@@ -528,4 +535,134 @@ def capabilities() -> dict:
         "can_create_session": bool(cred) and child_sessions_enabled(),
         "can_inject": el is not None,
         "needs_password": cred is None,
+        "host_running": host_running(),
     }
+
+
+# ---------------------------------------------------------------- 常驻宿主
+def _host_paths() -> tuple[str, str, str]:
+    """(脚本路径, 就绪文件, 停止文件)"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(here, "host_rdp.ps1")
+    tmpdir = os.environ.get("TEMP") or os.path.expanduser("~")
+    ready = os.path.join(tmpdir, "dsh-gui-host-ready.txt")
+    stop = os.path.join(tmpdir, "dsh-gui-host-stop.txt")
+    return script, ready, stop
+
+
+def host_running() -> bool:
+    """靠「有活动的子会话 explorer」来判断宿主还活着。
+
+    更精确的办法是记 PID，但宿主是独立进程，插件重载后 PID 就丢了。
+    子会话活着 ⇒ 宿主一定活着，这个反推足够用。
+    """
+    return find_child_explorer() is not None
+
+
+def start_host(width: int = 1280, height: int = 720,
+               timeout: float = 70.0) -> tuple[bool, str, Optional[dict]]:
+    """起常驻宿主，等它把子会话拉起来。
+
+    返回 (成功, 消息, 会话信息)。宿主是一个独立进程，插件卸载 / 重载
+    都不影响它——这正是子会话能长期活着的原因。
+    """
+    import subprocess
+
+    if host_running():
+        el = find_child_explorer()
+        sid, pid = el  # type: ignore[misc]
+        info = session_info(sid)
+        return True, "宿主已在运行，复用现有子会话", {
+            "session_id": sid, "explorer_pid": pid,
+            "user": info.get("user"), "state": info.get("state"),
+        }
+
+    cred = load_credential()
+    if cred is None:
+        return False, "还没有保存凭据，先执行 setup", None
+
+    script, ready_file, stop_file = _host_paths()
+    if not os.path.isfile(script):
+        return False, f"宿主脚本缺失: {script}", None
+
+    # 清掉上次的残留标记
+    for p in (ready_file, stop_file):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    # 找 pwsh；没有就退回 powershell.exe
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        return False, "找不到 PowerShell", None
+
+    cmd = [
+        pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", script,
+        "-Password", cred.password,
+        "-ReadyFile", ready_file,
+        "-StopFile", stop_file,
+        "-Width", str(width), "-Height", str(height),
+    ]
+
+    creationflags = 0
+    if os.name == "nt":
+        # 隐藏窗口：宿主不该闪一下
+        creationflags = 0x08000000  # CREATE_NO_WINDOW
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except OSError as e:
+        return False, f"启动宿主失败: {e}", None
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.isfile(ready_file):
+            el = find_child_explorer()
+            if el:
+                sid, pid = el
+                info = session_info(sid)
+                return True, f"宿主已就绪（pid {proc.pid}），子会话 {sid}", {
+                    "session_id": sid, "explorer_pid": pid,
+                    "user": info.get("user"), "state": info.get("state"),
+                    "host_pid": proc.pid,
+                }
+        if proc.poll() is not None:
+            return False, f"宿主进程已退出（码 {proc.returncode}）", None
+        time.sleep(0.4)
+
+    return False, f"等 {timeout:.0f} 秒仍未登录成功", {"host_pid": proc.pid}
+
+
+def stop_host(timeout: float = 20.0) -> tuple[bool, str]:
+    """让宿主断开并退出，子会话随之销毁。"""
+    _, ready_file, stop_file = _host_paths()
+
+    if not host_running():
+        return True, "没有运行中的子会话"
+
+    try:
+        with open(stop_file, "w", encoding="utf-8") as f:
+            f.write("stop")
+    except OSError as e:
+        return False, f"写停止标记失败: {e}"
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not host_running():
+            for p in (ready_file, stop_file):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return True, "子会话已关闭"
+        time.sleep(0.4)
+
+    return False, f"等 {timeout:.0f} 秒子会话仍未关闭"

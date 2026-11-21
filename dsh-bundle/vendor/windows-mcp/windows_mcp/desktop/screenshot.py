@@ -422,9 +422,16 @@ def capture_with_hash(
     """捕获并返回 ``(image, backend, 帧哈希, 是否与上一帧相同)``。
 
     帧哈希用于跳过重复帧的编码开销：画面没变时，调用方可以复用上次的
-    PNG 字节，而不是重新编码一遍。哈希本身是网格采样（64x64），微秒级。
+    PNG 字节，而不是重新编码一遍。哈希本身是网格采样（64x64），实测 3.1ms。
+
+    显示器布局或 DPI 缩放变了就先清缓存——缩放一变，同一块区域的物理像素
+    换了含义，旧缓存会误判成「这一帧没变」。
     """
     image, used = capture(capture_rect, backend=backend)
-    from windows_mcp.desktop.frame_cache import get_frame_cache
-    same, digest = get_frame_cache().check(capture_rect, image)
+    from windows_mcp.desktop.frame_cache import get_display_watcher, get_frame_cache
+
+    cache = get_frame_cache()
+    if get_display_watcher().changed():
+        cache.clear()
+    same, digest = cache.check(capture_rect, image)
     return image, used, digest, same

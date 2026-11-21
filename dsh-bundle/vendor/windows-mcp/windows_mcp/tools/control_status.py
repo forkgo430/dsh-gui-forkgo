@@ -22,7 +22,11 @@ def register(mcp, *, get_desktop, get_analytics):
         controller = get_controller()
         status = controller.release() if release else controller.status()
         worker = uia_worker_status()
-        from windows_mcp.desktop.frame_cache import get_frame_cache, warmer_stats
+        from windows_mcp.desktop.frame_cache import (
+            get_display_watcher,
+            get_frame_cache,
+            warmer_stats,
+        )
         return {
             **status,
             "ui_busy": worker["busy"],
@@ -30,5 +34,6 @@ def register(mcp, *, get_desktop, get_analytics):
             "capture": {
                 "frame_cache": get_frame_cache().stats(),
                 "warm_worker": warmer_stats(),
+                "display_watcher": get_display_watcher().stats(),
             },
         }

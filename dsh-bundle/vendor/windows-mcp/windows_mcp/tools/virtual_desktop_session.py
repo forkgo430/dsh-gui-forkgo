@@ -29,18 +29,20 @@ def register(
     @mcp.tool(
         name="IsolatedSession",
         description=(
-            "Manage an isolated Windows child session so AI can operate the computer "
-            "without stealing the user's mouse and keyboard. "
-            "action='status' reports what is available (child session state, saved "
-            "credential, bundled script runtimes, whether a session can be created). "
-            "action='setup' shows the standard Windows credential dialog once and stores "
-            "the password locally encrypted with the current user's DPAPI. "
-            "action='inject' loads a DLL into the child session's explorer.exe "
-            "(no SeDebugPrivilege needed for same-user processes). "
-            "action='forget' deletes the stored credential. "
-            "A child session only survives while its RDP host process lives, so keep "
-            "the host running. UIA-based tools never move the real pointer and should "
-            "be preferred when they can do the job."
+            "管理一个隔离的 Windows 子会话，让 AI 操作电脑时不抢用户的鼠标键盘。"
+            "action='status' 报告可用能力：子会话状态、已存凭据、内置脚本运行时、"
+            "能不能建会话、宿主在不在跑。"
+            "action='setup' 弹一次 Windows 标准凭据框，密码用当前账户的 DPAPI "
+            "加密后存在本机，之后不再问。"
+            "action='start' 起一个常驻宿主进程建子会话（默认 1280x720），"
+            "等 explorer.exe 出现才算就绪，约 16 秒。宿主是独立进程，"
+            "插件重载不影响它——子会话的存活就绑在它身上。"
+            "action='stop' 让宿主断开，子会话随之销毁。"
+            "action='inject' 把 DLL 注入子会话的 explorer.exe"
+            "（同用户进程不需要 SeDebugPrivilege）。"
+            "action='forget' 删掉存下的凭据。"
+            "约束：一个系统同时只能有一个活动子会话；能用 UIA 控件模式做的事"
+            "本来就不动真实指针，那些场景不用开子会话。"
         ),
         annotations=ToolAnnotations(
             title="IsolatedSession",
@@ -54,6 +56,8 @@ def register(
     def isolated_session_tool(
         action: str = "status",
         dll_path: str = "",
+        width: int = 1280,
+        height: int = 720,
         ctx: Context = None,
     ) -> dict[str, object]:
         act = (action or "status").strip().lower()
@@ -162,6 +166,20 @@ def register(
                 "message": msg,
             }
 
+        if act == "start":
+            ok, msg, detail = child_session.start_host(
+                width=int(width), height=int(height))
+            return {
+                "action": "start",
+                "ok": ok,
+                "message": msg,
+                "session": detail,
+            }
+
+        if act == "stop":
+            ok, msg = child_session.stop_host()
+            return {"action": "stop", "ok": ok, "message": msg}
+
         if act == "forget":
             removed = child_session.delete_credential()
             return {
@@ -174,5 +192,5 @@ def register(
         return {
             "action": act,
             "ok": False,
-            "message": f"未知动作 {act!r}，可用：status / setup / inject / forget。",
+            "message": f"未知动作 {act!r}，可用：status / setup / start / stop / inject / forget。",
         }

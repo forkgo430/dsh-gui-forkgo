@@ -9,10 +9,14 @@
 
 ### 新增
 
-- **`IsolatedSession` 工具**。四个动作：
+- **`IsolatedSession` 工具**。六个动作：
   - `status`：查当前能力——子会话状态、已存凭据、内置脚本运行时、能不能建会话
   - `setup`：弹 Windows 标准凭据框，用户输一次密码，`CryptProtectData` 加密后存进
     凭据管理器 `dsh-gui/Session`。之后不再问
+  - `start`：起一个**常驻宿主进程**建子会话（默认 1280×720），等
+    `explorer.exe` 出现才算就绪。实测 4.8 秒就绪，会话 `active`、协议 RDP。
+    宿主是独立进程，插件重载不影响它——子会话的存活就绑在它身上
+  - `stop`：让宿主断开，子会话随之销毁。实测 1.5 秒
   - `inject`：把 DLL 注入到子会话的 `explorer.exe`（同用户进程不需要
     `SeDebugPrivilege`）
   - `forget`：删掉存下的凭据
@@ -43,6 +47,25 @@
   现在 `Dengb.ttf` 28px（标题）/ `Deng.ttf` 19px（正文），面板不透明度
   0.80 → 0.88。面板 398×112 → 424×118。本机 412 个字体里逐套渲染对比后选定。
 
+### 常驻宿主
+
+子会话的存活绑在 RDP 控件所在的进程上——控件所在的进程一退，会话立刻
+`Disconnected`。所以 `start` 会起一个独立的 PowerShell 宿主进程
+（`desktop/host_rdp.ps1`），由它持有 ActiveX 并跑消息泵。
+
+关键设计：
+
+- 宿主窗口挪到屏幕外 `(-32000, -32000)`，`ShowInTaskbar = false`，
+  用户看不见它
+- 宿主和插件是两个进程，插件重载 / 重启都不影响子会话
+- 通过两个文件通信：`%TEMP%\dsh-gui-host-ready.txt`（就绪信号）、
+  `%TEMP%\dsh-gui-host-stop.txt`（停止信号）
+- 宿主自检连接状态，断了就自己退；最长存活 8 小时兜底
+
+一个修过的坑：`find_child_explorer()` 一开始只看「会话里有没有
+explorer.exe」，结果断开的会话（`state=4`）里 explorer 进程还在，
+被误判成宿主在跑。现在要求会话状态必须是 `active` 或 `connected`。
+
 ### 为什么凭据要问用户一次
 
 豆包工作（DoubaoWork）的做法是：从凭据管理器读一条已有的密码，用自定义的
@@ -63,7 +86,7 @@ AES-256 + SHA-512 方案解密，再通过命名管道明文发给 helper 进程
 ### 已知约束
 
 - **子会话的存活绑在 RDP 宿主进程上**。宿主一退，会话立刻 `Disconnected`。
-  产品化必须有一个常驻的宿主。
+  `start` 动作起的那个宿主就是干这个的，它是独立进程，插件重载不影响它。
 - 一个系统同一时刻只能有一个活动子会话（微软文档）。
 - `CreateProcessAsUser` 在本机不可用：缺 `SeAssignPrimaryToken`、`SeIncreaseQuota`、
   `SeTcb` 三个特权。所以走注入，不走新建进程——这也是豆包的做法。

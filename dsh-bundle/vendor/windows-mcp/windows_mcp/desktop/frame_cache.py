@@ -152,3 +152,79 @@ def stop_warmer() -> None:
 
 def warmer_stats() -> dict[str, Any]:
     return _warmer.stats() if _warmer else {"running": False}
+
+
+# ---------------------------------------------------------------- DPI 重枚举
+class DisplayWatcher:
+    """盯着显示器布局与 DPI 缩放，变了就让缓存失效。
+
+    为什么要有：``GetDisplays()`` 本身每次都真实调用 ``GetDpiForMonitor``，
+    是实时的；但帧哈希缓存是按 (区域, 哈希) 记的，缩放一变，同一块区域
+    的物理像素就换了含义，旧缓存会给出错误的「这一帧没变」判断。
+
+    所以每次截图前问一句「显示器布局变了吗」，变了就丢掉全部缓存。
+    检查本身很便宜（一次 EnumDisplayMonitors + 每显示器一次 GetDpiForMonitor），
+    但没必要每帧都做，按 interval 节流。
+    """
+
+    def __init__(self, interval: float = 1.0) -> None:
+        self._interval = interval
+        self._last_check = 0.0
+        self._signature: tuple | None = None
+        self._changes = 0
+        self._checks = 0
+
+    @staticmethod
+    def _read_signature() -> tuple | None:
+        try:
+            from windows_mcp import uia
+            displays = uia.GetDisplays()
+        except Exception:
+            return None
+        if not displays:
+            return None
+        out = []
+        for d in displays:
+            r = d.rect
+            out.append((
+                d.index,
+                r.left, r.top, r.right, r.bottom,
+                d.effective_dpi,
+                round(d.scale, 4) if d.scale else None,
+                d.orientation,
+            ))
+        return tuple(sorted(out))
+
+    def changed(self) -> bool:
+        """距上次检查超过 interval 才真去读，返回布局是否变了。"""
+        now = time.monotonic()
+        if now - self._last_check < self._interval:
+            return False
+        self._last_check = now
+        self._checks += 1
+        sig = self._read_signature()
+        if sig is None:
+            return False
+        if self._signature is None:
+            self._signature = sig
+            return False
+        if sig != self._signature:
+            self._signature = sig
+            self._changes += 1
+            return True
+        return False
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "checks": self._checks,
+            "changes": self._changes,
+            "interval": self._interval,
+            "displays": len(self._signature) if self._signature else 0,
+        }
+
+
+_display_watcher = DisplayWatcher()
+
+
+def get_display_watcher() -> DisplayWatcher:
+    return _display_watcher
