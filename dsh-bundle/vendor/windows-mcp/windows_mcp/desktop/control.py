@@ -67,6 +67,12 @@ class ControlCoordinator:
         # Set once by the server lifespan before any tools or hooks start.
         self.enabled = True
         self.idle_timeout_seconds = 10.0
+        # AI 侧空闲多久自动交还控制权。和 idle_timeout_seconds 是反方向的：
+        # 那个管「用户空闲多久后 AI 才被允许接管」，这个管「AI 多久没动作就
+        # 该放手」。不设的话，调用方忘了 release()，叠加层会一直挂在屏幕上。
+        # 默认 120 秒：足够覆盖一次慢工具调用，又不至于让用户盯着蓝光干等。
+        self.agent_idle_release_seconds = 120.0
+        self._agent_last_active = 0.0
         self.call_lease_timeout_seconds = 30.0
         self.policy = "relaxed"
         self.consent_countdown_seconds = 10
@@ -166,6 +172,9 @@ class ControlCoordinator:
     def pause_for_capture(self) -> int | None:
         """Release physical input before an AI indicator is hidden for capture."""
         with self._lock:
+            # 每次 AI 动作都刷新一次活动时间。下面 _agent_idle_release 用它判断
+            # 智能体是不是已经不再干活了。
+            self._agent_last_active = time.monotonic()
             if self._state != "ai" or not self._visual_armed:
                 return None
             self._suppress = False
@@ -175,10 +184,32 @@ class ControlCoordinator:
             self.input_ledger.block_new()
             return self._generation
 
+    def _agent_idle_release(self, now: float) -> bool:
+        """智能体长时间没有动作就自动交还控制权。
+
+        为什么需要：拿到控制权后必须由调用方显式 release()，叠加层才会撤。
+        `idle_timeout_seconds` 管的是反方向（用户空闲多久后 AI 才被允许接管），
+        对「AI 拿到控制权后就不管了」没有任何约束。
+
+        实测踩过：智能体跑完一轮对话没调 release，四周蓝光和顶部提示面板
+        在屏幕上挂了七十多分钟，用户以为程序卡死。
+
+        Returns True 表示这一轮刚触发交还，需要通知界面。
+        """
+        if self._state != "ai" or self._agent_last_active <= 0:
+            return False
+        if now - self._agent_last_active < self.agent_idle_release_seconds:
+            return False
+        changed = self._set_locked("ready")
+        if changed:
+            self._agent_last_active = 0.0
+        return changed
+
     def resume_after_capture(self, generation: int | None, *, restored: bool) -> None:
         """Re-arm only after the indicator is restored and no user event occurred."""
         if generation is None:
             return
+        self._agent_last_active = time.monotonic()
         if not restored or (self._health_probe is not None and not self._health_probe()):
             self._fail_open()
             return

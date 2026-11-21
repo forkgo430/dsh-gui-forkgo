@@ -55,6 +55,14 @@ def run_control_worker(owner: Any, interactive_desktop: Callable[[], bool]) -> N
                     break
                 owner._handle(event)
             owner._handle(("tick",))
+            # 智能体长时间没动作就自动交还控制权。
+            # 否则调用方忘了 release()，叠加层会一直挂在屏幕上——
+            # 实测踩过七十多分钟没撤的。
+            try:
+                if owner._agent_idle_release(time.monotonic()):
+                    owner._notify(owner.status())
+            except Exception:  # noqa: BLE001 — 自动交还失败不该拖垮 worker
+                pass
             fault = owner._fault_token
             can_recover = owner._rehook_completed is fault and not owner._rotating
             if owner._emergency and not can_recover:
