@@ -45,7 +45,9 @@ def _as_region(value: list | str | None) -> list | None:
     return json.loads(value)
 
 
-WINDOWS_NOT_LISTED = "Not listed: Screenshot skips window enumeration. Call Snapshot for windows."
+WINDOWS_NOT_LISTED = (
+    'Not listed: mode="fast" skips window enumeration. Use Screen with mode="full" for windows.'
+)
 
 
 def capture_desktop_state(

@@ -1,19 +1,36 @@
 ---
 name: gui-desktop
-description: 通过 GUI（windows-mcp）MCP 操作整台 Windows 机器：截屏观察、点击、输入、快捷键、拖拽、窗口与进程、文件、注册表、PowerShell、剪贴板、虚拟桌面、控制权。当用户要求"帮我在电脑上点/输入/打开某个程序/看屏幕上有什么/操作只有界面才能完成的流程"时使用。强制走「先观察后动手 → 精确定位 → 小步验证 → 控制权交还」四步，避免盲点、点错位置、把用户的鼠标抢走不放。仅限 Windows；纯命令行能解决的任务不要用本技能。
+description: 通过 GUI（windows-mcp）MCP 操作整台 Windows 机器：看屏幕、点击输入、快捷键拖拽、剪贴板、窗口与进程、文件、注册表、命令、虚拟桌面、控制权。当用户要求"帮我在电脑上点/输入/打开某个程序/看屏幕上有什么/操作只有界面才能完成的流程"时使用。强制走「先观察后动手 → 精确定位 → 小步验证 → 控制权交还」四步，避免盲点、点错位置、把用户的鼠标抢走不放。仅限 Windows；纯命令行能解决的任务不要用本技能。
 license: MIT
 compatibility: Windows 10/11；需要 windows-mcp 服务器进程在运行（GUI 插件挂载）
 metadata:
   author: 赢容
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # 在 Windows 上操作界面的正确链路
 
 > 作者：赢容（与「WPS 多面手」同一位作者）
 
-工具不缺（15 个，`mcp__gui__*`），缺的是**按什么顺序用**。
+工具不缺（8 个，`mcp__gui__*`），缺的是**按什么顺序用**。
 本技能只管顺序和判断，不重复工具清单 —— 清单会过期，以 `tools/list` 为准。
+
+## 八个工具，先认清楚
+
+| 工具 | 一句话 | 找它的哪个参数 |
+|---|---|---|
+| `Screen` | 看屏幕 | `mode`：`full` 控件树 + 图 / `fast` 只出图 / `displays` 显示器与 DPI |
+| `Input` | 动手 | `action`：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit / clipboard_get / clipboard_set |
+| `Programs` | 开程序、管窗口、查杀进程 | `mode`：launch / launch_executable / resize / switch / list / kill |
+| `System` | 命令、文件、注册表 | `mode`：文件 8 种 + 注册表 `reg_*` 4 种 + `shell` |
+| `Scrape` | 抓网页 | `url` |
+| `ControlStatus` | 谁在控制 | `release=true` 交还 |
+| `VirtualDesktop` | 任务栏那几组窗口 | `action` 八种 |
+| `IsolatedSession` | 独立子会话（不抢键鼠） | `action`：status/setup/start/stop/inject/forget |
+
+**参数认 mode，不认工具。** 从 15 个合并成 8 个之后，`mode` 决定参数的含义：
+`System(mode="read", path="C:\\a.txt")` 读文件，`System(mode="reg_get", path="HKCU:\\X")`
+读注册表。传错 mode 会报错并列出该 mode 可用的参数，不会静默写错地方。
 
 ## 什么时候用 / 不用
 
@@ -31,56 +48,58 @@ metadata:
 
 ### 1. 先观察后动手
 
-动手之前一定先看。两种看法，按需选：
+动手之前一定先看。三种看法，按需选：
 
-| 方式 | 什么时候用 | 代价 |
+| 用法 | 什么时候用 | 代价 |
 |---|---|---|
-| `Snapshot`（默认 `use_vision=False`） | **优先**。标准控件都能报出角色、名称、坐标 | 纯文本，便宜 |
-| `Snapshot(use_vision=True)` | 要在画面上判断位置、看排版、认图标 | 附图，贵 |
-| `Screenshot` | 只要一眼画面，不要控件树 | 总是附图 |
+| `Screen(mode="full")` | **优先**。标准控件都能报出角色、名称、坐标 | 纯文本，便宜 |
+| `Screen(mode="full", use_vision=True)` | 要在画面上判断位置、看排版、认图标 | 附图，贵 |
+| `Screen(mode="fast")` | 只要一眼画面，不要控件树 | 总是附图 |
+| `Screen(mode="displays")` | 查显示器布局、DPI、缩放，不截图 | 极便宜 |
 
-**默认走 Snapshot 不附图**。Electron / 浏览器 / 原生 Win32 的按钮都在控件树里，
+**默认走 `full` 不附图**。Electron / 浏览器 / 原生 Win32 的按钮都在控件树里，
 直接给你可点的坐标，不用从图上量。只有 canvas、WebGL、游戏、图片里的文字
 才必须看图。
 
-`Snapshot` 支持 `region=[left,top,right,bottom]`，**一定要用**：全屏快照会把任务栏、
+`Screen` 支持 `region=[left,top,right,bottom]`，**一定要用**：全屏快照会把任务栏、
 壁纸、无关窗口全塞进来，既贵又乱。锁到你要操作的那一块。
 
 ### 2. 精确定位
 
 拿到坐标后有两种点法：
 
-- **按坐标点**：`Click(loc=[x,y])` —— 坐标是屏幕物理像素，和 `Snapshot` 报的一致，直接用。
-- **按控件点**：先用 `Snapshot(includeValues=...)` 拿到控件，再按名称/索引操作。
+- **按坐标点**：`Input(action="click", loc=[x,y])` —— 坐标是屏幕像素，和 `Screen` 报的一致，直接用。
+- **按控件点**：`Input(action="click", label=<控件编号>)` —— 比坐标稳，控件移动了也不会点空。
 
 **坐标不要猜**。看着像 (300,400) 就点 (300,400) 是本技能最常见的失败原因。
 每次点之前问自己：这个坐标是刚才哪一次观察报出来的？
 
-`Move` 只移动不点击，用来触发悬停菜单；`Scroll` 在指定点滚动，`wheel_times` 控制量。
-`MultiEdit` 可以一次填多个输入框，`MultiSelect` 处理多选（`press_ctrl` 控制是否按住 Ctrl）。
+`Input(action="move")` 只移动不点击，用来触发悬停菜单；`scroll` 在指定点滚动，
+`wheel_times` 控制量。`multi_edit` 一次填多个输入框，`multi_select` 处理多选
+（`press_ctrl` 控制是否按住 Ctrl）。
 
 ### 3. 小步验证
 
 **一次动作，一次确认。** 不要连续点五次然后才看结果。
 
-- 点完 → `Snapshot(region=同一块)` 看有没有出现预期变化
-- 输入完 → 读回来看值对不对（`Type` 的 `clear` / `caret_position` 会影响结果）
-- 打开程序 → `WaitFor(text_exists=...)` 等比 `Wait(固定秒数)` 可靠
+- 点完 → `Screen(mode="full", region=同一块)` 看有没有出现预期变化
+- 输入完 → 读回来看值对不对（`type` 的 `clear` / `caret_position` 会影响结果）
+- 打开程序 → `Input(action="wait_for", condition="text_exists", text=...)` 比固定等待可靠
 
-连续动作要合并时用 `MultiEdit` / 多步脚本，但**每步之间要留 `settleMs`**，
-给界面反应的时间。太快会点到还没画出来的东西上。
+连续动作要合并时用 `multi_edit` / 多步脚本，但**每步之间要留时间**，
+给界面反应的机会。太快会点到还没画出来的东西上。
 
 ### 4. 控制权交还
 
 这个工具会**抢占真实鼠标键盘**。人在键盘前动一下就会打架。
 
 - 开场先 `ControlStatus` 看当前状态（`state` / `policy` / `idle_timeout_seconds`）
-- 干完活主动 `ControlStatus(release=True)` 交还，**不要让用户等你**
+- 干完活主动 `ControlStatus(release=true)` 交还，**不要让用户等你**
 - 需要长时间操作时，先说一句"接下来会接管鼠标键盘"
 
-默认策略是 `relaxed`：`Click` / `Type` / `Scroll` / `Move` / `Shortcut` /
-`MultiEdit` / `MultiSelect` 会先拿桌面所有权；`Snapshot` / `Screenshot` /
-`Wait` / `WaitFor` / `DisplayInventory` / `Scrape` 不拿，可以随便调。
+默认策略是 `relaxed`：`Input` 的所有动作会先拿桌面所有权（含剪贴板）；
+`Programs` 的 `resize` / `switch` 也拿，`launch` / `list` / `kill` 不拿；
+`Screen` / `Scrape` / `IsolatedSession` 完全不拿，可以随便调。
 
 ## 虚拟桌面（`VirtualDesktop`）
 
@@ -97,43 +116,63 @@ metadata:
 | `move_window` 只搬本进程窗口 | 别的进程的窗口抛 `PermissionError` | 不动它，直接在那个桌面上操作 |
 
 **这不是输入隔离。** 切走以后鼠标键盘还是共享的，被切走的桌面里进程照跑、照出声。
-要真正隔离得用 Terminal Server 子会话，那是另一个量级的东西。
+要真正隔离得用 `IsolatedSession`，那是另一个量级的东西。
+
+## 隔离会话（`IsolatedSession`）
+
+要长时间操作、又不想抢用户键鼠时用它。`action` 六个：
+
+| action | 干什么 | 代价 |
+|---|---|---|
+| `status` | 查能不能建、凭据存了没、宿主在不在跑 | 无 |
+| `setup` | 弹一次 Windows 凭据框，密码用 DPAPI 加密存本机 | 要输一次密码 |
+| `start` | 起一个常驻宿主进程建子会话，默认 1280×720 | 约 16 秒 |
+| `stop` | 让宿主断开，`WTSLogoffSession` 注销会话 | 约 2 秒 |
+| `inject` | 往子会话的 explorer 里注入 DLL | 需要 `dll_path` |
+| `forget` | 删掉存下的凭据 | — |
+
+**子会话的存活绑在宿主进程上。** 宿主一退会话立刻掉线。插件重载不影响它 ——
+宿主是独立进程。用完记得 `stop`，不然会堆孤儿会话，每个几百 MB。
 
 ## 三条红线
 
-### 一、`Snapshot` 之后再 `Click`，不要反过来
+### 一、`Screen` 之后再点，不要反过来
 
 坐标只有一个来源：刚才那次观察。改窗口大小、切标签、弹新窗口都会让旧坐标失效。
-**如果两次动作之间过了一秒以上，或者有任何界面变化，重新 Snapshot。**
+**如果两次动作之间过了一秒以上，或者有任何界面变化，重新 `Screen`。**
 
-### 二、破坏性操作先看 annotations
+### 二、破坏性操作先想清楚在改什么
 
-`PowerShell` / `FileSystem` / `Registry` / `Process(kill)` / `App` / `Click` /
-`Type` / `MultiEdit` / `Shortcut` 这些能改东西。
+`System` 的 `shell` / `write` / `delete` / `reg_set` / `reg_delete`、`Programs` 的
+`kill`、`Input` 的 `clipboard_set` 都能改东西。
 
 - 删文件、改注册表、杀进程、关闭文档之前**先说一句**，别默默干
-- `PowerShell` 是整台机器的 shell，不是沙箱 —— 它不受 DSH 的文件沙箱限制
-- 写文件优先用 `write` / `edit` 工具，不要绕道 PowerShell
+- `System(mode="shell")` 是整台机器的 shell，不是沙箱 —— 它不受 DSH 的文件沙箱限制
+- 写文件优先用 `write` / `edit` 工具，不必绕道 `shell`
+- `clipboard_set` 覆盖的是用户真的剪贴板，别拿它当工具之间的传参通道
 
 ### 三、窗口标题别当唯一标识
 
 按 `title` 找窗口时，标题可能重复（两个记事本、多个浏览器标签）。
-`VirtualDesktop.move_window` 遇到多个匹配会**直接报错并列出候选**，不会瞎选。
-`Snapshot` 的窗口列表带 `handle`，用 handle 更稳。
+`VirtualDesktop` 的 `move_window` 遇到多个匹配会**直接报错并列出候选**，不会瞎选。
+`Screen(mode="full")` 的窗口列表带 `handle`，用 handle 更稳。
 
 ## 常见任务的正确起手
 
 | 任务 | 起手 |
 |---|---|
-| "帮我看看屏幕上有什么" | `Snapshot(region=关心的区域)` 不附图 |
-| "点一下那个按钮" | `Snapshot(region=那块)` → 从控件树拿坐标 → `Click(loc=...)` |
-| "在那个输入框里填内容" | `Snapshot` 确认输入框坐标 → `Click` 聚焦 → `Type` |
-| "打开某某程序" | 先 `pwsh` 试 `Start-Process`；GUI 流程才用 `App(launch=...)` |
-| "等某个东西出现" | `WaitFor(text_exists=...)`，不要 `Wait(10)` |
+| "帮我看看屏幕上有什么" | `Screen(mode="full", region=关心的区域)` 不附图 |
+| "点一下那个按钮" | `Screen(mode="full", region=那块)` → 从控件树拿坐标 → `Input(action="click", loc=...)` |
+| "在那个输入框里填内容" | `Screen` 确认输入框坐标 → `click` 聚焦 → `type` |
+| "打开某某程序" | 先 `pwsh` 试 `Start-Process`；GUI 流程才用 `Programs(mode="launch")` |
+| "等某个东西出现" | `Input(action="wait_for", condition="text_exists")`，别用固定等待 |
 | "帮我整理窗口" | `VirtualDesktop` 建桌面 → `move_window`（只对本进程窗口有效） |
+| "这台机器几个屏、缩放多少" | `Screen(mode="displays")` |
+| "别抢我鼠标" | `IsolatedSession(action="start")` |
 
 ## 参考
 
-- 工具清单与参数：`tools/list`（15 个，别凭记忆写参数名）
+- 工具清单与参数：`tools/list`（8 个，别凭记忆写参数名）
 - 屏幕提示文案（蓝光/顶部面板/接管确认框）改在哪：`vendor/windows-mcp/windows_mcp/desktop/control_overlay_art.py`
   与 `control_consent.py`，都在本 bundle 内
+- 哪个工具会抢控制权：`vendor/windows-mcp/windows_mcp/tools/control_policy.py`

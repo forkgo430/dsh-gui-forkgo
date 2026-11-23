@@ -3,7 +3,7 @@
  * Output: 结构自检 + 技能自检 + 连接层自检；失败 exit 1
  * Pos: dsh-bundle 的自检脚本。**不需要 dsh**，只验三件 bundle 最容易坏的事：
  *      ① 包结构符合 dsh 的 bundle 规范；② skills/ 里那份技能能被 dsh 认出来；
- *      ③ windows-mcp 起得来、15 个工具列得出来、名字合 dsh 的字符集。
+ *      ③ windows-mcp 起得来、8 个工具列得出来、名字合 dsh 的字符集。
  *
  * 用法：node selftest.js
  *       node selftest.js --no-connect   （只跑结构+技能，不启动 MCP 子进程）
@@ -338,7 +338,7 @@ async function checkConnect() {
     }
     // 期望工具数。改合并方式时同步改这里；CI 的 docs job 从这一行读数字，
     // 拿它去核对 README 有没有写漂，省得同一个数字散落在三处各改一遍。
-    const EXPECTED_TOOL_COUNT = 15;
+    const EXPECTED_TOOL_COUNT = 8;
     if (tools.length !== EXPECTED_TOOL_COUNT) {
       bad(`工具数 ${tools.length}，期望 ${EXPECTED_TOOL_COUNT}`
           + '：多了少了都说明合并或注册出了问题');
@@ -355,18 +355,83 @@ async function checkConnect() {
     if (tooLong.length) bad(`加前缀后超 64 字符：${tooLong.slice(0, 3).join(', ')}`);
     else ok('加 mcp__gui__ 前缀后全部 ≤ 64 字符');
 
-    // 本 bundle 的存在理由就是这个工具；掉了就说明 PYTHONPATH 没生效、跑的是上游
-    if (names.includes('VirtualDesktop')) ok('VirtualDesktop 在（本地分支生效）');
-    else bad('VirtualDesktop 不在：PYTHONPATH 未生效，跑的是 PyPI 上游 21 工具版');
+    // 15 → 8 合并后的完整名单。少一个说明注册表漏了，多一个说明旧模块又被加回来了。
+    // VirtualDesktop 在不在，同时验证了 PYTHONPATH 是否生效 —— 它只存在于本地分支，
+    // 掉了就说明跑的是 PyPI 上游版。
+    for (const expected of [
+      'ControlStatus', 'Screen', 'Input', 'Programs',
+      'System', 'Scrape', 'VirtualDesktop', 'IsolatedSession',
+    ]) {
+      if (names.includes(expected)) ok(`${expected} 在`);
+      else bad(`${expected} 不在：tools/__init__.py 未注册或模块导入失败`);
+    }
 
-    // 1.2.0 新增：独立子会话（不抢用户鼠标键盘）
-    if (names.includes('IsolatedSession')) ok('IsolatedSession 在（1.2.0 子会话能力）');
-    else bad('IsolatedSession 不在：tools/__init__.py 未注册或模块导入失败');
+    // 被合并掉的旧工具名必须彻底消失。
+    // 这一条是防复发的关键：旧模块文件还留在 tools/ 里（为了让上游单元测试还能
+    // import 到符号），只要有人一时手快把 app / process / snapshot 加回 _MODULES，
+    // 工具数会变成 15 混着 8，而**不会报任何错**。这里直接把它们钉死。
+    for (const retired of [
+      'Snapshot', 'Screenshot', 'DisplayInventory', 'App', 'Process',
+      'PowerShell', 'FileSystem', 'Registry', 'Clipboard',
+    ]) {
+      if (names.includes(retired)) {
+        bad(`旧工具 ${retired} 又出现了：它已被合并进 Screen / Programs / System / Input`);
+      }
+    }
+    ok('9 个旧工具名都没重现（合并彻底）');
+
+    // 合并后每个工具的 mode/action 必须真的能分发。只看 schema 里有没有这个参数
+    // 是不够的 —— 参数存在但分支漏了，调用时才炸。这里检查枚举值。
+    const enumOf = (toolName, prop) => {
+      const tool = tools.find((t) => t.name === toolName);
+      return tool?.inputSchema?.properties?.[prop]?.enum
+        ?? tool?.parameters?.properties?.[prop]?.enum
+        ?? tool?.parameters?.properties?.[prop]?.items?.enum
+        ?? [];
+    };
+
+    const screenModes = enumOf('Screen', 'mode');
+    for (const m of ['full', 'fast', 'displays']) {
+      if (screenModes.length && screenModes.includes(m)) ok(`Screen.mode 有 ${m}`);
+      else if (screenModes.length) bad(`Screen.mode 缺 ${m}（现有：${screenModes.join(',')}）`);
+    }
+
+    const programModes = enumOf('Programs', 'mode');
+    for (const m of ['launch', 'launch_executable', 'resize', 'switch', 'list', 'kill']) {
+      if (programModes.length && programModes.includes(m)) ok(`Programs.mode 有 ${m}`);
+      else if (programModes.length) bad(`Programs.mode 缺 ${m}`);
+    }
+
+    const systemModes = enumOf('System', 'mode');
+    for (const m of ['read', 'write', 'copy', 'move', 'delete', 'list', 'search', 'info',
+                     'reg_get', 'reg_set', 'reg_delete', 'reg_list', 'shell']) {
+      if (systemModes.length && systemModes.includes(m)) ok(`System.mode 有 ${m}`);
+      else if (systemModes.length) bad(`System.mode 缺 ${m}`);
+    }
 
     // 工具名不能重复——重名会让后注册的那个被静默覆盖
     const dups = names.filter((n, i) => names.indexOf(n) !== i);
     if (dups.length) bad(`工具名重复：${[...new Set(dups)].join(', ')}`);
     else ok('工具名无重复');
+
+    // 控制权分类必须覆盖所有工具。
+    // 这条是最容易被漏掉的：control_policy.py 里没登记的工具会被当成 direct，
+    // 于是只读的 Screen 也去抢用户的鼠标键盘。不报错，只是行为变差。
+    if (pythonPath) {
+      const policyPath = join(pythonPath, 'windows_mcp', 'tools', 'control_policy.py');
+      if (existsSync(policyPath)) {
+        const src = readFileSync(policyPath, 'utf8');
+        const missing = names.filter((n) => n !== 'ControlStatus'
+          && !new RegExp(`["']${n}["']`).test(src));
+        if (missing.length) {
+          bad(`control_policy.py 没登记这些工具（会默认成 direct 抢控制权）：${missing.join(', ')}`);
+        } else {
+          ok('control_policy.py 覆盖了全部 8 个工具');
+        }
+      } else {
+        note('找不到 control_policy.py，跳过分类覆盖检查');
+      }
+    }
 
     // 屏幕提示必须已是中文；这是本分支的改动之一
     if (pythonPath) {

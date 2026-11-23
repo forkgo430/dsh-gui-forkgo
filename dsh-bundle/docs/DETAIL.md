@@ -6,17 +6,37 @@
 
 ## 提供什么
 
-服务器名固定为 `gui`，工具名形如 `mcp__gui__<tool>`，共 15 个：
+服务器名固定为 `gui`，工具名形如 `mcp__gui__<tool>`，共 **8 个**：
 
-| 能力 | 工具 | 说明 |
+| 工具 | 干什么 | mode / action |
 |---|---|---|
-| 观察 | `Snapshot`、`Screenshot`、`DisplayInventory` | 截当前屏幕、取控件树拿到可点击元素的坐标与名称、读显示器与 DPI |
-| 输入 | `Input` | 一个入口，`action` 分发：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit。点击、双击、右键、移动、拖拽、滚轮、输入文本、组合键、批量填多格都在这里 |
-| 窗口与程序 | `App`、`Process` | 启动程序、切换/聚焦/调整窗口、查进程 |
-| 文件与系统 | `FileSystem`、`Registry`、`PowerShell`、`Clipboard`、`Scrape`、`Notification` | 读写文件、改注册表、执行命令、剪贴板、抓网页、发通知 |
-| 控制权 | `ControlStatus` | 谁在控制桌面、空闲多少秒后交还、截图缓存与预热状态 |
-| 虚拟桌面 | `VirtualDesktop` | 任务栏上那几组窗口：列出、新建、切换、重命名、删除、把窗口挪过去 |
-| 隔离会话 | `IsolatedSession` | 独立子会话，AI 在另一个桌面里操作，不抢鼠标键盘。`status` 查能力、`setup` 存密码、`start`/`stop` 起停宿主、`inject` 注入 DLL、`forget` 删凭据 |
+| `Screen` | 看屏幕 | `full`（控件树 + 图，默认）· `fast`（只出图）· `displays`（显示器与 DPI） |
+| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` |
+| `Programs` | 启动程序、管窗口、查杀进程 | `launch` `launch_executable` `resize` `switch` `list` `kill` |
+| `System` | 命令、文件、注册表 | 文件 `read` `write` `copy` `move` `delete` `list` `search` `info`；注册表 `reg_get` `reg_set` `reg_delete` `reg_list`；命令 `shell` |
+| `Scrape` | 抓网页（`use_dom=true` 读浏览器当前页） | — |
+| `ControlStatus` | 谁在控制、空闲多少秒后交还、截图缓存与预热状态 | `release` |
+| `VirtualDesktop` | 任务栏上那几组窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
+| `IsolatedSession` | 独立子会话，不抢鼠标键盘 | `status` `setup` `start` `stop` `inject` `forget` |
+
+### 从 15 个合并成 8 个
+
+依据是参数包含关系，不是为了数字好看：
+
+```
+Snapshot + Screenshot + DisplayInventory  ->  Screen
+App + Process                             ->  Programs
+PowerShell + FileSystem + Registry        ->  System
+Clipboard                                 ->  Input 的 clipboard_get / clipboard_set
+```
+
+`Screenshot` 的六个参数全在 `Snapshot` 里，`DisplayInventory` 一个参数都没有；
+`Clipboard` 的 `text` 在 `Input` 里本来就是参数；`System` 三个工具的安全注解完全一致。
+
+**合并的风险是同名参数语义不同**：`System` 的 `path` 在文件模式是文件路径、在
+注册表模式是注册表键路径。所以每个 mode 都校验参数，传了不属于该 mode 的参数
+直接报错并列出可用项，不静默忽略。`control_policy.py` 也必须同步 —— 没登记的工具
+会被当成 `direct`，于是只读的 `Screen` 也去抢控制权，而这不会报错。
 
 和内置 `pwsh` 工具的分工：`pwsh` 是命令行层（改文件、跑脚本、抓日志），GUI 是图形层（点安装向导、读弹窗、处理只有 GUI 才有的流程）。
 
@@ -27,8 +47,8 @@
 ```yaml
 serverName: gui
 transport: stdio
-command: 'C:\Users\<user>\.local\bin\uvx.exe'
-args: ['--python', '3.14', '--from', 'windows-mcp', 'windows-mcp', 'serve', '--transport', 'stdio']
+command: <由 !!js 探测，依次试 %GUI_UVX% / ~/.local/bin / %UV_INSTALL_DIR% / LOCALAPPDATA / cargo / chocolatey / Program Files，落空退裸名 uvx>
+args: ['--python', '3.14', '--from', 'windows-mcp==0.8.9', 'windows-mcp', 'serve', '--transport', 'stdio']
 env:
   PYTHONUTF8: '1'
   PYTHONIOENCODING: 'utf-8'

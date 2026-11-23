@@ -4,7 +4,7 @@
 
 DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务器 `windows-mcp`，把 Windows 的 UI Automation 和窗口管理包装成一组工具，模型就能像人一样看屏幕、点按钮、敲键盘、切换窗口、管理虚拟桌面。
 
-工具名形如 `mcp__gui__<工具名>`（`serverName: gui`，共 15 个），另带一份技能 `gui-desktop` 教模型按顺序使用。
+工具名形如 `mcp__gui__<工具名>`（`serverName: gui`，共 8 个），另带一份技能 `gui-desktop` 教模型按顺序使用。
 
 ## 装
 
@@ -19,17 +19,22 @@ DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务�
 
 ## 提供什么
 
-服务器名固定为 `gui`，21 个上游工具加 1 个本地新增的 `VirtualDesktop`：
+服务器名固定为 `gui`，**8 个工具**：
 
-| 能力 | 工具 |
-|---|---|
-| 观察 | `Snapshot`、`Screenshot`、`DisplayInventory` |
-| 鼠标 | `Click`、`Move`、`Scroll`、`MultiSelect` |
-| 键盘 | `Type`、`Shortcut`、`MultiEdit` |
-| 窗口与程序 | `App`、`Process`、`Wait`、`WaitFor` |
-| 文件与系统 | `FileSystem`、`Registry`、`PowerShell`、`Clipboard`、`Scrape`、`Notification` |
-| 控制权 | `ControlStatus` |
-| 虚拟桌面 | `VirtualDesktop`（任务栏上那几组窗口：列出、新建、切换、重命名、删除、把窗口挪过去） |
+| 工具 | 干什么 | mode / action |
+|---|---|---|
+| `Screen` | 看屏幕 | `full`（控件树 + 图）· `fast`（只出图）· `displays`（显示器与 DPI） |
+| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` |
+| `Programs` | 启动程序、管窗口、查杀进程 | `launch` `launch_executable` `resize` `switch` `list` `kill` |
+| `System` | 命令、文件、注册表 | 文件 8 个 mode；注册表 `reg_*` 4 个；命令 `shell` |
+| `Scrape` | 抓网页 | — |
+| `ControlStatus` | 谁在控制、空闲多久交还 | `release` |
+| `VirtualDesktop` | 任务栏那几组窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
+| `IsolatedSession` | 独立子会话，不抢键鼠 | `status` `setup` `start` `stop` `inject` `forget` |
+
+从 15 个合并到 8 个的依据是参数包含关系，不是凑数：`Screenshot` 的六个参数全在
+`Snapshot` 里、`DisplayInventory` 一个参数都没有、`Clipboard` 的 `text` 在 `Input`
+里本来就是参数。完整的合并账在仓库根目录的 README。
 
 和内置 `pwsh` 工具的分工：`pwsh` 是命令行层（改文件、跑脚本、抓日志），GUI 是图形层（点安装向导、读弹窗、处理只有 GUI 才有的流程）。
 
@@ -82,7 +87,7 @@ env:
 ## 改
 
 - 换服务器网关名：`cordis.patch.yml` 里的 `serverName`（工具前缀随之变化，规则 `^[A-Za-z0-9_-]{1,32}$`）
-- 退回纯上游：删掉 `PYTHONPATH` 那段即可（15 个工具会退回 21 个，`VirtualDesktop` 与 `IsolatedSession` 消失）
+- 退回纯上游：删掉 `PYTHONPATH` 那段即可（8 个工具会退回上游版，`VirtualDesktop` 与 `IsolatedSession` 消失）
 - 命令跑得慢：调 `toolCallTimeoutMs` / `startupTimeoutMs`
 - 不想自动重连：`reconnect.enabled: false`
 
@@ -103,7 +108,7 @@ node selftest.js --no-connect # 只验结构与技能
    `PYTHONPATH` 指向的是完整源码树而不是增量覆盖层。
 2. **技能 frontmatter** —— `name` 是 kebab-case 且与目录名一致、`description` 不为空。
    缺 description 时 dsh 会静默不加载，用户只看到「AI 不会用」，没有任何报错。
-3. **连接层** —— 真起 stdio、`initialize`、`tools/list`，确认 15 个工具里
+3. **连接层** —— 真起 stdio、`initialize`、`tools/list`，确认工具数是 8、8 个名字都在
    `VirtualDesktop` 与 `IsolatedSession` 都在（本地分支生效）、工具名不重复、
    屏幕提示文案是中文、名字合 dsh 字符集。
 

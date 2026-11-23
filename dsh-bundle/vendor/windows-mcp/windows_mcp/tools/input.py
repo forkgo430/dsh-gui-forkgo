@@ -25,7 +25,7 @@ WaitForCondition = Literal[
 def _resolve_label(desktop: Any, label: int) -> list[int]:
     """Resolve a UI element label to screen coordinates."""
     if desktop.desktop_state is None:
-        raise ValueError("Desktop state is empty. Please call Snapshot first.")
+        raise ValueError('Desktop state is empty. Please run Screen with mode="full" first.')
     try:
         return list(desktop.get_coordinates_from_label(label))
     except Exception as e:
@@ -210,6 +210,35 @@ def _validate_wait_for_args(
         )
 
     return normalized
+
+
+def _clipboard_get() -> str:
+    """读系统剪贴板文本。原 Clipboard 工具 mode="get" 的实现，原样搬过来。"""
+    import win32clipboard
+
+    win32clipboard.OpenClipboard()
+    try:
+        if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+            data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+            return f"Clipboard content:\n{data}"
+        return "Clipboard is empty or contains non-text data."
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def _clipboard_set(text: str) -> str:
+    """写系统剪贴板文本。原 Clipboard 工具 mode="set" 的实现，原样搬过来。"""
+    if text is None:
+        return "Error: text parameter required for clipboard_set."
+    import win32clipboard
+
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        return f"Clipboard set to: {text[:100]}{'...' if len(text) > 100 else ''}"
+    finally:
+        win32clipboard.CloseClipboard()
 
 
 def register(
@@ -424,7 +453,7 @@ def register(
         locs = locs or []
         if labels is not None:
             if desktop.desktop_state is None:
-                raise ValueError("Desktop state is empty. Please call Snapshot first.")
+                raise ValueError('Desktop state is empty. Please run Screen with mode="full" first.')
             try:
                 resolved_locs = desktop.get_coordinates_from_labels(labels)
                 locs.extend([list(loc) for loc in resolved_locs])
@@ -449,7 +478,7 @@ def register(
         locs = locs or []
         if labels is not None:
             if desktop.desktop_state is None:
-                raise ValueError("Desktop state is empty. Please call Snapshot first.")
+                raise ValueError('Desktop state is empty. Please run Screen with mode="full" first.')
 
             # Pre-validate and extract labels and texts
             processed_labels = []
@@ -478,14 +507,16 @@ def register(
     @mcp.tool(
         name="Input",
         description=(
-            "鼠标、键盘、等待，一个入口。按 action 分发："
+            "鼠标、键盘、剪贴板、等待，一个入口。按 action 分发："
             "click=按坐标或控件点击；type=输入文字；scroll=滚轮；move=移动指针或拖拽；"
             "shortcut=快捷键组合；wait=固定等待；wait_for=等条件成立；"
-            "multi_select=批量选或多点；multi_edit=批量填多格。"
+            "multi_select=批量选或多点；multi_edit=批量填多格；"
+            "clipboard_get=读系统剪贴板；clipboard_set=写系统剪贴板（text 传内容）。"
             "click 支持 button（left/right/middle）与 clicks（0=悬停 1=单击 2=双击），"
             "按控件比按坐标稳。type 的 clear=True 清空再输。"
             "wait_for 的 condition 可选 text_exists / active_window / element_exists / "
             "element_enabled / focused_element。"
+            "clipboard 是真实的系统剪贴板，set 会覆盖用户已复制的内容；别拿它当工具之间的传参通道。"
         ),
         annotations=ToolAnnotations(
             title="Input",
@@ -562,6 +593,16 @@ def register(
         if act == "multi_edit":
             return multi_edit_tool(locs=locs, labels=labels, ctx=ctx)
 
+        # 剪贴板两个动作。原来是独立的 Clipboard 工具（mode=get/set），
+        # 合并进来一个新参数都不用加 —— text 本来就在。Input 内部的 _paste_text
+        # 本来就在操作剪贴板，语义上是一体的。
+        if act == "clipboard_get":
+            return _clipboard_get()
+
+        if act == "clipboard_set":
+            return _clipboard_set(text)
+
         raise ValueError(
             f"未知 action {action!r}。可用：click / type / scroll / move / "
-            f"shortcut / wait / wait_for / multi_select / multi_edit")
+            f"shortcut / wait / wait_for / multi_select / multi_edit / "
+            f"clipboard_get / clipboard_set")

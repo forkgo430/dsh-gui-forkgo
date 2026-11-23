@@ -53,9 +53,15 @@ _HINT_FACES = ("Deng.ttf", "msyh.ttc", "simsun.ttc", "segoeui.ttf")
 # 正文再小（原来的 16）在 1920 屏上隔着房间看不清。
 _TITLE_SIZE = 28
 _HINT_SIZE = 19
-# 面板不透明度。原来的 0.80 让白字透出背景色，笔画边缘发灰；0.88 保住
-# 层次感的同时让文字落到实色上。
-_NOTICE_ALPHA = 0.88
+# 面板不透明度：必须完全不透明。
+#
+# 原来 0.88，本意是"保住层次感"。代价是背后任何文字都会透上来 —— 实测在 DSH 的
+# 插件页上，「已安装」「发现」两个标签压在面板底下清清楚楚，和面板自己的标题叠成
+# 两层文字，一眼看过去像渲染重影。
+#
+# 这类浮层不存在"半透明更好看"：它盖住的是任意内容的桌面，不让内容透上来才能保证
+# 只读到自己那两行字。1.0 之后边缘仍有 8px 羽化，不会切出生硬的直角。
+_NOTICE_ALPHA = 1.0
 
 
 def _load_font(faces: tuple[str, ...], size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -77,20 +83,21 @@ def _breath_opacity(elapsed: float) -> int:
 def _glow_alpha(depth: float, extent: int = _BORDER) -> int:
     """Edge glow strength at ``depth`` pixels in from the screen edge.
 
-    A continuous falloff with no step at the far end. The old version returned
-    a hard 0 at ``extent - 1``, which put a visible seam one pixel inside the
-    band; this curve reaches zero smoothly instead.
+    One continuous ramp, no plateau.
 
-    Shape: flat at the very edge, then a cosine ease that spends most of its
-    length in the visible middle. ``(1 - t)**1.4`` (the old curve) dropped too
-    fast near the edge, so the band read as a stroked border rather than a glow.
+    上一版用的是 ``((cos(t*pi)+1)/2)**1.15``：这条曲线在前 18px 只掉 26%
+    （236→174），后面的 38px 才掉到 0。肉眼看就是「一条实心蓝边 + 一层渐变」，
+    也就是屏幕上像有两层蓝光。余弦在 t=0 处导数为零，越靠近边缘越平，所以那段
+    天然发死。
+
+    现在用 ``(1-t)**1.45``：边缘处斜率最大，从第一像素就开始变暗，整条带子只有
+    一段渐变。指数 1.45 是折中——上游的更早版本用 1.4，配上硬切到 0 的结尾会显得
+    像描边；现在的 1.45 全程平滑，且不像余弦那样前半段发死。
     """
     if depth >= extent:
         return 0
     t = depth / extent
-    # Ease-out: 1 at the edge, 0 at the far end, with a gentle shoulder.
-    eased = (math.cos(t * math.pi) + 1) / 2
-    return round(_GLOW_PEAK_ALPHA * eased**1.15)
+    return round(_GLOW_PEAK_ALPHA * (1 - t) ** 1.45)
 
 
 def _frame_layer_bitmap(

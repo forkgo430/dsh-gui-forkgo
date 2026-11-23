@@ -92,7 +92,7 @@ jobs:
       - name: 连接层自检（起 stdio、列工具）
         working-directory: dsh-bundle
         run: node selftest.js
-        # 验：initialize / tools/list / 15 个工具 / 字符集合规 / ≤64 字符。
+        # 验：initialize / tools/list / 8 个工具 / 字符集合规 / ≤64 字符。
         # 注意：CI 上没有本地分支的 PYTHONPATH，所以 VirtualDesktop 与中文文案
         # 两项会跳过（selftest 里按 pythonPath 是否存在决定是否检查）。
 

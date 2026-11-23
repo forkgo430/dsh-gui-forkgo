@@ -51,27 +51,54 @@ npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.2.0/dsh-g
 
 ## 提供什么
 
-服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 15 个：
+服务器名是 `gui`，工具名形如 `mcp__gui__<工具名>`，共 **8 个**：
 
-| 能力 | 工具 | 说明 |
+| 工具 | 干什么 | mode / action |
 |---|---|---|
-| 观察 | `Snapshot` · `Screenshot` · `DisplayInventory` | 控件树带可点坐标；`use_vision=False` 时只返回文本，不附图 |
-| 输入 | `Input` | 一个入口。`action` 分发：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit |
-| 窗口与程序 | `App` · `Process` | 启动、切换、调整窗口、查进程 |
-| 文件与系统 | `FileSystem` · `Registry` · `PowerShell` · `Clipboard` · `Scrape` · `Notification` | |
-| 控制权 | `ControlStatus` | 谁在控制、空闲多久交还、截图缓存的运行状态 |
-| **虚拟桌面** | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 |
-| **隔离会话** | **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘。`status` 查能力、`setup` 存密码一次、`start`/`stop` 起停常驻宿主、`inject` 注入 DLL、`forget` 删凭据 |
+| `Screen` | 看屏幕 | `full`（控件树 + 图，默认）· `fast`（只出图）· `displays`（显示器与 DPI） |
+| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` |
+| `Programs` | 启动程序、管窗口、查杀进程 | `launch` `launch_executable` `resize` `switch` `list` `kill` |
+| `System` | 命令、文件、注册表 | 文件 `read` `write` `copy` `move` `delete` `list` `search` `info`；注册表 `reg_get` `reg_set` `reg_delete` `reg_list`；命令 `shell` |
+| `Scrape` | 抓网页；`use_dom=true` 读浏览器当前页 | — |
+| `ControlStatus` | 谁在控制、空闲多久交还、截图缓存状态 | `release` |
+| **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
+| **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘 | `status` `setup` `start` `stop` `inject` `forget` |
 
 另有一份技能 `gui-desktop`，说明这些工具的使用顺序。
 
-输入类工具原本是七个（`Click`、`Type`、`Scroll`、`Move`、`Shortcut`、`Wait`、
-`WaitFor`），加上 `MultiSelect`、`MultiEdit` 一共九个。1.2.0 把它们合并成 `Input`
-一个入口，实现函数没有改动，只是外面套了一层按 `action` 分发的壳。
+### 为什么是 8 个
 
-### 四处实现上的取舍
+原来是 15 个，合并的依据是**参数包含关系**，不是为了数字好看：
 
-**`Snapshot` 默认不附图。** 只返回控件树，含角色、名称、坐标、可用动作、快捷键。
+```
+Snapshot + Screenshot + DisplayInventory  →  Screen
+App + Process                             →  Programs
+PowerShell + FileSystem + Registry        →  System
+Clipboard                                 →  Input 的 clipboard_get / clipboard_set
+```
+
+- `Screenshot` 的六个参数全在 `Snapshot` 里，`DisplayInventory` 一个参数都没有；
+- `Clipboard` 的 `text` 在 `Input` 里本来就是参数，`Input` 内部的 `_paste_text` 也一直在操作剪贴板；
+- `App` / `Process` 都有 `name`，`System` 三个工具的安全注解完全一致（都会写盘）。
+
+再往前一步：输入类工具原本是七个（`Click`、`Type`、`Scroll`、`Move`、`Shortcut`、
+`Wait`、`WaitFor`），加上 `MultiSelect`、`MultiEdit` 一共九个，1.2.0 已经合并成
+`Input` 一个入口。
+
+**没合并的三个留着是有原因的**：`Scrape` 要调 LLM 做摘要；`VirtualDesktop` 和
+`IsolatedSession` 一个动窗口分组、一个起独立会话，机制完全不同，硬塞进同一个
+`action` 命名空间只会让参数语义变模糊。
+
+合并唯一的成本是**同名参数语义不同**：`System` 的 `path` 在文件模式是文件路径、
+在注册表模式是注册表键路径。所以每个 mode 都校验参数，传了不属于该 mode 的参数
+直接报错并列出可用项，绝不静默忽略。
+
+### 几处实现上的取舍
+
+**`Screen` 默认是 `full`。** 调用方多半是「我要看着屏幕决定下一步」，取到坐标才有用。
+要速度的人显式写 `mode="fast"`。
+
+**`Screen` 默认不附图。** 只返回控件树，含角色、名称、坐标、可用动作、快捷键。
 坐标可以直接用来点击。canvas、WebGL 和图片里的文字不在控件树里，这些情况才需要开 `use_vision`。
 
 **`VirtualDesktop` 是本仓加的。** 上游 `windows-mcp` 写好了虚拟桌面的 COM 封装，
@@ -140,7 +167,7 @@ flowchart LR
     A["DSH<br/>loader"] -->|按包名解析| B["dsh-bundle<br/>只有配置与资产"]
     B -->|spawn| C["uvx"]
     C -->|拉依赖 + PYTHONPATH 覆盖源码| D["windows-mcp<br/>stdio MCP server"]
-    D -->|15 个工具| A
+    D -->|8 个工具| A
     B -->|customSkillDirs| E["gui-desktop<br/>SKILL.md"]
     E --> A
 ```
@@ -220,14 +247,17 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
   Remove-Item -Recurse -Force
 ```
 
-它挡的是三类「改对了也看不出来」的问题：
+它挡的是四类「改对了也看不出来」的问题：
 
 1. **包结构** —— `dsh.bundle.patch` 是否存在、`args` 里有没有相对路径、
+   `command` 是不是探测而来（不能写死某个人的 uvx 路径）、`--from` 有没有钉版本、
    `PYTHONPATH` 是不是由 `!!js` 反解而不是写死的绝对路径、`vendor/` 是不是完整的源码树。
 2. **技能 frontmatter** —— `name` 是否为 kebab-case 且与目录名一致、`description` 是否为空。
    缺 description 时 dsh 不会加载，也不报错，表现是「AI 不会用」。
-3. **连接层** —— 真起 stdio、列工具，确认 15 个工具里 `VirtualDesktop` 与
-   `IsolatedSession` 都在、名字不重复、屏幕文案是中文。
+3. **连接层** —— 真起 stdio、列工具，确认工具数是 8、8 个名字都在、9 个旧工具名
+   一个都没重现、每个工具的 `mode` 枚举齐全、名字不重复、屏幕文案是中文。
+4. **控制权分类** —— `control_policy.py` 是否覆盖了全部 8 个工具。
+   这条漏了不会报错，只会让只读的 `Screen` 也去抢用户的鼠标键盘。
 
 ## 与上游的关系
 
@@ -255,9 +285,11 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 - 只支持 Windows：UI Automation 和虚拟桌面 API 都是 Windows 专有
 - 默认会占用真实的鼠标键盘，人在键盘前动一下就会互相干扰。用 `IsolatedSession`
   开子会话可以避免，代价是一次 Windows 密码
-- `PowerShell` 是整机 shell，不受 DSH 文件沙箱限制。删文件、改注册表之前要先说一声
-- canvas、WebGL、游戏画面这类只有像素没有控件树的界面必须走 `use_vision`，
+- `System` 的 `shell` 模式是整机 shell，不受 DSH 文件沙箱限制。删文件、改注册表之前要先说一声
+- canvas、WebGL、游戏画面这类只有像素没有控件树的界面必须走 `Screen` 的 `use_vision`，
   成本更高，而且要靠看图判断
+- 合并成一个工具后，`System` 有 18 个参数。模型每次调用都要在整张表里挑出对应的三个，
+  跨 mode 选错会多花一次往返。这是合并换来的紧凑度所付的代价
 
 ## 故障排除
 
@@ -269,6 +301,7 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 | **改了源码但行为没变** | **删掉 `vendor/windows-mcp` 下的 `__pycache__` 再重启**。`.pyc` 旧字节码会盖住新代码，且毫无征兆 |
 | 蓝光和提示面板一直挂着不消失 | 智能体忘了交还控制权。调 `ControlStatus(release=true)`；1.2.2 起 120 秒无动作会自动交还 |
 | `VirtualDesktop` 不存在 | `vendor/windows-mcp` 没被带上，跑的是 PyPI 上游的 21 工具版 |
+| 工具数变成 15 或更多 | `tools/__init__.py` 里旧模块又被加回去了。`selftest.js` 会直接报「旧工具 X 又出现了」 |
 | 屏幕提示还是英文 | 同上，`PYTHONPATH` 没指到 `vendor/` 里的源码 |
 | 技能不出现 | 跑 `npm run selftest`；缺 description 会跳过且不报错 |
 | 首次调用很慢 | `uvx` 冷启动要拉 Python 3.14 与依赖，约 5 秒；之后走缓存 |
