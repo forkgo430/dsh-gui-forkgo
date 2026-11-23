@@ -16,15 +16,26 @@
 
 ## 30 秒上手
 
-把 `dsh-bundle/` 装进 DSH：
+三种装法，选一个：
 
 ```powershell
+# ① 从 npm（最省事，但版本可能落后于源码）
+npm i dsh-gui-forkgo
+
+# ② 本地目录（改源码立即生效，开发用这个）
 # 插件页 → 添加插件 → 本地目录 → 选本仓的 dsh-bundle/
-# 或
 plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
+
+# ③ GitHub Release 的 tgz
+npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.2.0/dsh-gui-forkgo-1.2.0.tgz
 ```
 
-重启插件行后可以直接说：
+> **⚠ npm 上的版本和源码不同步。**
+> npm 是 `1.2.2`（2026-11-21 审核通过），本地源码也是 `1.2.2`，但**内容不一样**：
+> 本地多了 `agent_idle_release_seconds`（智能体长时间不动作就自动交还控制权）。
+> 版本号相同是历史遗留，不是笔误。要完整功能请用**本地目录**装法。
+
+装完重启插件行，可以直接说：
 
 > 帮我看看屏幕上现在是什么
 
@@ -187,6 +198,28 @@ npm run selftest:offline   # 只验结构与技能
 连接层会真起一次 MCP。依赖已经在缓存里时约 5 秒，首次要拉 Python 3.14 和依赖，
 实测 11 秒左右。
 
+### 改完源码怎么生效
+
+用本地目录装法时，改代码不会自动生效，有两道坎：
+
+```
+改源码
+  → 关掉插件行 include:gui
+  → 删掉 vendor/windows-mcp 下的所有 __pycache__
+  → 重新打开插件行
+```
+
+**为什么必须删 `__pycache__`**：Python 会优先用 `.pyc` 里的旧字节码。改完源码
+不删缓存，进程重启后跑的可能还是旧逻辑，而且看不出任何征兆——我在这上面浪费过
+一整轮排查，明明代码改了、进程重启了，行为还是旧的。
+
+一条命令清掉：
+
+```powershell
+Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycache__ |
+  Remove-Item -Recurse -Force
+```
+
 它挡的是三类「改对了也看不出来」的问题：
 
 1. **包结构** —— `dsh.bundle.patch` 是否存在、`args` 里有没有相对路径、
@@ -232,6 +265,8 @@ npm run selftest:offline   # 只验结构与技能
 |------|---------|
 | 工具列表里没有 `mcp__gui__*` | 确认 `include:gui` 是 active；看插件页有没有启动失败 |
 | 插件显示 failed 但手动能起 | DSH 缓存了失败的连接状态，把插件关掉再打开一次 |
+| **改了源码但行为没变** | **删掉 `vendor/windows-mcp` 下的 `__pycache__` 再重启**。`.pyc` 旧字节码会盖住新代码，且毫无征兆 |
+| 蓝光和提示面板一直挂着不消失 | 智能体忘了交还控制权。调 `ControlStatus(release=true)`；1.2.2 起 120 秒无动作会自动交还 |
 | `VirtualDesktop` 不存在 | `vendor/windows-mcp` 没被带上，跑的是 PyPI 上游的 21 工具版 |
 | 屏幕提示还是英文 | 同上，`PYTHONPATH` 没指到 `vendor/` 里的源码 |
 | 技能不出现 | 跑 `npm run selftest`；缺 description 会跳过且不报错 |
@@ -239,6 +274,8 @@ npm run selftest:offline   # 只验结构与技能
 | `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp windows-mcp --help` 预热 |
 | `IsolatedSession` 报 1909 | 账户被锁了。本机策略是 10 次失败锁 600 秒，等一会儿或换管理员账户解锁 |
 | `start` 一直不到就绪 | `status` 看 `credential_saved` 是不是 true；看 `%TEMP%\dsh-gui-host-ready.txt` 有没有生成 |
+| `stop` 说关了但会话还在 | 1.2.2 之前的版本只关宿主不注销会话。升级到 1.2.2+，或用 `WTSLogoffSession` 手动清 |
+| `VirtualDesktop` 传错桌面 | 1.2.2 起 `index` 统一从 1 开始。之前 `list` 返回 0 起、`target` 按 1 起解析，会差一位 |
 
 ## 许可
 
