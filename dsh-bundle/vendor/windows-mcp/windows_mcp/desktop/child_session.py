@@ -559,12 +559,78 @@ def host_running() -> bool:
     return find_child_explorer() is not None
 
 
+PREVIEW_TITLE = "DSH 子会话"
+
+
+def preview_window() -> Optional[dict]:
+    """找出宿主那个预览窗，报告它到底在哪、看不看得见。
+
+    为什么不让调用方假设：宿主可能被 ``-Visible:$false`` 起成屏幕外，
+    也可能被用户拖走了、最小化了、或者关掉了。这三种状态下"有子会话"
+    都成立，但用户能不能看见完全是另一回事。status 里报一句空话没用，
+    这里真的去枚举窗口。
+
+    返回 None 表示找不到窗口（宿主用了旧脚本，或进程已退）。
+    """
+    import ctypes.wintypes as _wt
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    EnumProc = ctypes.WINFUNCTYPE(_wt.BOOL, _wt.HWND, _wt.LPARAM)
+
+    found: list[int] = []
+
+    def _cb(hwnd, _lparam):
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        if buf.value.startswith(PREVIEW_TITLE):
+            found.append(hwnd)
+        return True
+
+    try:
+        user32.EnumWindows(EnumProc(_cb), 0)
+    except Exception:
+        return None
+
+    if not found:
+        return None
+
+    hwnd = found[0]
+    rect = _wt.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    visible = bool(user32.IsWindowVisible(hwnd))
+    minimized = bool(user32.IsIconic(hwnd))
+    # 屏幕外判定：左上角跑到 -30000 一带就是老行为
+    offscreen = rect.left <= -30000 or rect.top <= -30000
+    return {
+        "hwnd": hwnd,
+        "title": PREVIEW_TITLE,
+        "visible": visible,
+        "minimized": minimized,
+        "offscreen": offscreen,
+        "rect": {
+            "left": rect.left, "top": rect.top,
+            "right": rect.right, "bottom": rect.bottom,
+            "width": rect.right - rect.left,
+            "height": rect.bottom - rect.top,
+        },
+        # 一句话结论，省得调用方自己去推三个 bool
+        "on_screen": visible and not minimized and not offscreen,
+    }
+
+
 def start_host(width: int = 1280, height: int = 720,
-               timeout: float = 70.0) -> tuple[bool, str, Optional[dict]]:
+               timeout: float = 70.0, visible: bool = True,
+               left: int = -1, top: int = -1) -> tuple[bool, str, Optional[dict]]:
     """起常驻宿主，等它把子会话拉起来。
 
     返回 (成功, 消息, 会话信息)。宿主是一个独立进程，插件卸载 / 重载
     都不影响它——这正是子会话能长期活着的原因。
+
+    ``visible=True``（默认）把宿主窗口摆在主屏右下角，用户能看见 AI 在里面
+    操作什么。这不会让子会话的输入影响用户：AI 动手是在另一个会话里，
+    用户的键鼠本来就不在那边。窗口只在用户主动点它时才会拿到焦点。
+
+    ``left``/``top`` 传非负值可以指定位置，例如用户想把窗挪到副屏。
     """
     import subprocess
 
@@ -604,11 +670,21 @@ def start_host(width: int = 1280, height: int = 720,
         "-ReadyFile", ready_file,
         "-StopFile", stop_file,
         "-Width", str(width), "-Height", str(height),
+        # [bool] 参数只接受真正的布尔值或数字。从 subprocess 传进来的每个
+        # token 都是字符串，所以 "$true" 会以字面量 "System.String '$true'"
+        # 到达，参数绑定直接失败（"无法将值 System.String 转换为 System.Boolean"）。
+        # 数字是 PowerShell 明确支持的布尔字面量，1/0 最稳。
+        "-Visible", ("1" if visible else "0"),
     ]
+    if left >= 0:
+        cmd += ["-Left", str(int(left))]
+    if top >= 0:
+        cmd += ["-Top", str(int(top))]
 
     creationflags = 0
     if os.name == "nt":
-        # 隐藏窗口：宿主不该闪一下
+        # 隐藏控制台窗口。注意这跟预览窗无关：CREATE_NO_WINDOW 只压控制台，
+        # WinForms 的窗体照样能显示。
         creationflags = 0x08000000  # CREATE_NO_WINDOW
 
     try:
@@ -633,6 +709,7 @@ def start_host(width: int = 1280, height: int = 720,
                     "session_id": sid, "explorer_pid": pid,
                     "user": info.get("user"), "state": info.get("state"),
                     "host_pid": proc.pid,
+                    "preview_visible": visible,
                 }
         if proc.poll() is not None:
             return False, f"宿主进程已退出（码 {proc.returncode}）", None

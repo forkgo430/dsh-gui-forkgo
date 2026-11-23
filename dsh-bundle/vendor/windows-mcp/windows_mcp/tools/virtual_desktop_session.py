@@ -37,6 +37,13 @@ def register(
             "action='start' 起一个常驻宿主进程建子会话（默认 1280x720），"
             "等 explorer.exe 出现才算就绪，约 16 秒。宿主是独立进程，"
             "插件重载不影响它——子会话的存活就绑在它身上。"
+            "start 会在主屏右下角摆一个预览窗，让用户看得见 AI 在里面操作什么："
+            "窗口置顶、有标题栏和关闭按钮，可以拖动；点它会把焦点给宿主，"
+            "但 AI 的动作发生在另一个会话里，碰不到用户的键鼠。"
+            "传 visible=false 退回旧行为（窗口挪到屏幕外，完全不可见）；"
+            "传 left/top 可以指定位置，例如挪到副屏。"
+            "注意 Screen 截的是用户自己的桌面，看不到子会话内部——"
+            "要看子会话只能看这个预览窗。"
             "action='stop' 让宿主断开，子会话随之销毁。"
             "action='inject' 把 DLL 注入子会话的 explorer.exe"
             "（同用户进程不需要 SeDebugPrivilege）。"
@@ -58,6 +65,9 @@ def register(
         dll_path: str = "",
         width: int = 1280,
         height: int = 720,
+        visible: bool | str = True,
+        left: int = -1,
+        top: int = -1,
         ctx: Context = None,
     ) -> dict[str, object]:
         act = (action or "status").strip().lower()
@@ -83,6 +93,8 @@ def register(
                     "process_count": len(procs),
                     "has_explorer": any(
                         n.lower() == "explorer.exe" for _, n in procs),
+                    # 用户在任务栏 / 屏幕上找得到那个预览窗吗
+                    "preview_window": child_session.preview_window(),
                 }
             else:
                 result["session_detail"] = None
@@ -167,8 +179,14 @@ def register(
             }
 
         if act == "start":
+            # visible 允许传字符串（"false" / "0"），MCP 客户端有时候不做类型转换。
+            if isinstance(visible, str):
+                show = visible.strip().lower() not in ("false", "0", "no", "off", "")
+            else:
+                show = bool(visible)
             ok, msg, detail = child_session.start_host(
-                width=int(width), height=int(height))
+                width=int(width), height=int(height),
+                visible=show, left=int(left), top=int(top))
             return {
                 "action": "start",
                 "ok": ok,

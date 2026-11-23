@@ -17,7 +17,7 @@
 | `Scrape` | 抓网页（`use_dom=true` 读浏览器当前页） | — |
 | `ControlStatus` | 谁在控制、空闲多少秒后交还、截图缓存与预热状态 | `release` |
 | `VirtualDesktop` | 任务栏上那几组窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
-| `IsolatedSession` | 独立子会话，不抢鼠标键盘 | `status` `setup` `start` `stop` `inject` `forget` |
+| `IsolatedSession` | 独立子会话，不抢鼠标键盘；`start` 摆出实时预览窗 | `status` `setup` `start` `stop` `inject` `forget` |
 
 ### 从 15 个合并成 8 个
 

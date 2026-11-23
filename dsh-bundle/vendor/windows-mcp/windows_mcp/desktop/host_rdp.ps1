@@ -5,16 +5,37 @@
 #   -ReadyFile      登录成功后写这个文件，父进程靠它判断就绪
 #   -StopFile       看到这个文件就退出
 #   -Width/-Height  子会话分辨率
+#   -Visible        是否把宿主窗口摆在屏幕上（true=看得见预览，false=挪到屏幕外）
+#   -Left/-Top      可见时的窗口位置；不传就自动贴到工作区右下角
 #
 # 退出时会断开连接，子会话随之销毁。
+#
+# 为什么要能看见：子会话跑起来后，用户在 Session 1 里用 Screen 截到的还是自己的
+# 桌面 —— 子会话的画面只存在于这个 RDP 控件内部。窗口一旦挪到屏幕外，AI 在里面
+# 干什么用户完全看不见。豆包的「小窗口虚拟桌面」就是把这个控件摆在明面上。
+#
+# 为什么原来要藏起来：宿主窗口会抢焦点。但那是 AI 在子会话里操作，本来就碰不到
+# 用户的键鼠；用户主动点预览窗才需要它拿到焦点。所以现在默认可见，靠
+# -Visible:$false 还能退回旧行为。
 
 param(
     [string]$Password = "",
     [string]$ReadyFile = "",
     [string]$StopFile = "",
     [int]$Width = 1280,
-    [int]$Height = 720
+    [int]$Height = 720,
+    # 为什么是 [string] 不是 [bool]：用 -File 从别的进程调用时，PowerShell 把所有
+    # 参数都当字符串送进绑定器，而 [bool] 参数会直接拒绝 "1"/"$true" 这类字符串
+    # （实测报 "无法将值 System.String 转换为 System.Boolean"）。
+    # 收成字符串、自己解析，调用方传什么都行。
+    [string]$Visible = "true",
+    [int]$Left = -1,
+    [int]$Top = -1
 )
+
+# 宽容解析：true/1/yes/on → 可见；其余（含空串）→ 不可见。
+# 空串按不可见处理，因为那多半是调用方拼参数时漏了值，看得见比看不见更该显式要求。
+$ShowWindow = $Visible.Trim().ToLower() -in @('true', '1', 'yes', 'on')
 
 $ErrorActionPreference = 'Stop'
 
@@ -106,21 +127,59 @@ function Get-Procs([int]$sid) {
 $USER = $env:USERNAME
 $DOMAIN = $env:COMPUTERNAME
 
-Write-Host "宿主启动: $DOMAIN\$USER  子会话 ${Width}x${Height}"
+Write-Host "宿主启动: $DOMAIN\$USER  子会话 ${Width}x${Height}  可见=$ShowWindow"
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "DSH 隔离会话宿主"
+$form.Text = "DSH 子会话 — AI 正在这里面操作"
 $form.ClientSize = New-Object System.Drawing.Size($Width, $Height)
 $form.StartPosition = 'Manual'
-# 挪到屏幕外：宿主不该出现在用户眼前
-$form.Location = New-Object System.Drawing.Point(-32000, -32000)
-$form.ShowInTaskbar = $false
+
+if ($ShowWindow) {
+    # 预览窗：能拖动、能改大小、在任务栏上有一席之地。
+    #
+    # 标题栏必须留着。子会话的分辨率是固定的（DesktopWidth/Height 在连接前就定了），
+    # 拖动边框改窗口大小只会让控件缩放或者留黑边，所以这里锁掉可调整边框——
+    # FixedToolWindow 给的是小号标题栏 + 关闭按钮，省出来的高度都给了画面。
+    $form.FormBorderStyle = 'FixedToolWindow'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $true
+    $form.ShowInTaskbar = $true
+    $form.TopMost = $true
+
+    # 默认贴到主屏工作区右下角，留 24px 边距。
+    if ($Left -lt 0 -or $Top -lt 0) {
+        $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $frameW = $Width + 16   # 估上边框，精确定位在 Show() 之后再做一次
+        $frameH = $Height + 39
+        $Left = $wa.Right - $frameW - 24
+        $Top = $wa.Bottom - $frameH - 24
+    }
+    $form.Location = New-Object System.Drawing.Point($Left, $Top)
+} else {
+    # 旧行为：挪到屏幕外，什么都不显示
+    $form.FormBorderStyle = 'None'
+    $form.ShowInTaskbar = $false
+    $form.Location = New-Object System.Drawing.Point(-32000, -32000)
+}
 
 $ax = New-Object RdpAxHost
 $ax.Dock = 'Fill'
 $form.Controls.Add($ax)
 $form.Show()
 [System.Windows.Forms.Application]::DoEvents()
+
+if ($ShowWindow) {
+    # Show() 之后窗口才有真实外框尺寸，这时候再校正一次默认位置，
+    # 免得边框估算差几像素把窗口顶出屏幕。
+    $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $needW = $form.Width
+    $needH = $form.Height
+    $nx = [Math]::Max($wa.Left, $wa.Right - $needW - 24)
+    $ny = [Math]::Max($wa.Top, $wa.Bottom - $needH - 24)
+    $form.Location = New-Object System.Drawing.Point($nx, $ny)
+    [System.Windows.Forms.Application]::DoEvents()
+    Write-Host "预览窗位置: $($form.Location.X),$($form.Location.Y)  尺寸 $($form.Width)x$($form.Height)"
+}
 
 $ocx = $ax.Ocx
 $W = $form.ClientSize.Width -band -bnot 1
@@ -175,12 +234,23 @@ if (-not $ready) {
 
 # 常驻：消息泵 + 检查停止文件
 $alive = [Diagnostics.Stopwatch]::StartNew()
+$userClosed = $false
 while ($true) {
     [System.Windows.Forms.Application]::DoEvents()
     Start-Sleep -Milliseconds 200
 
     if ($StopFile -and (Test-Path $StopFile)) {
         Write-Host "收到停止信号，断开"
+        break
+    }
+    # 用户把预览窗关掉了。既要断开连接，也要把停止标记写出来 ——
+    # 否则下一轮 start 看到的是「子会话还在」，会去复用一具尸体。
+    if ($ShowWindow -and $form.IsDisposed) {
+        Write-Host "用户关闭了预览窗，断开"
+        $userClosed = $true
+        if ($StopFile) {
+            try { "closed-by-user" | Out-File -FilePath $StopFile -Encoding utf8 -NoNewline } catch {}
+        }
         break
     }
     # 连接掉了就退出
@@ -196,6 +266,8 @@ while ($true) {
 }
 
 try { $ax.Invoke($ocx, 'Disconnect') | Out-Null } catch {}
-$form.Close()
-$form.Dispose()
+if (-not $form.IsDisposed) {
+    $form.Close()
+    $form.Dispose()
+}
 Write-Host "宿主结束"

@@ -132,10 +132,46 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 加密后存进凭据管理器 `dsh-gui/Session`，之后不再问。存的是**标准 DPAPI blob**，
 不是自定义方案。
 
+### 预览窗：看得见 AI 在干什么
+
+`start` 会在主屏右下角摆一个**预览窗**，里面是子会话的实时画面——独立的桌面、
+独立的图标、独立的任务栏。AI 在里面操作什么，你一眼就看得到。
+
+```
+┌─ DSH 子会话 — AI 正在这里面操作 ────────────┐
+│                                              │
+│        （子会话的实时桌面画面）              │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+- **置顶**，可以拖动，标题栏上有关闭按钮
+- 点它会把焦点给宿主窗口，但 AI 的动作发生在另一个会话里，碰不到你的键鼠
+- 关掉预览窗＝断开连接，子会话跟着销毁（不是只关窗留个孤儿）
+- 想挪到副屏：`start(left=1920, top=0)`
+- 想回到完全不可见的老行为：`start(visible=false)`
+
+**为什么需要它**：`Screen` 截的永远是你自己的桌面（MCP 进程跑在 Session 1），
+子会话的画面只存在于那个 RDP 控件内部。窗口挪到屏幕外，AI 在里面干什么你完全
+看不见——这正是上一版的样子。
+
+`status` 里的 `preview_window` 会如实报告窗口在哪：
+
+```json
+"preview_window": {
+  "visible": true, "minimized": false, "offscreen": false,
+  "rect": {"left": 745, "top": 301, "width": 1145, "height": 749},
+  "on_screen": true
+}
+```
+
+`on_screen` 是三个 bool 的结论。窗口被拖到屏幕外、被最小化、或者用了
+`visible=false`，这里都会是 `false`，不用自己去推。
+
 三点已知约束，先说在前面：
 
-- **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。`start` 动作会起一个
-  独立的宿主进程（窗口挪到屏幕外，用户看不见），插件重载不影响它。
+- **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。`start` 会起一个
+  独立的宿主进程，插件重载不影响它。
 - 一个系统同一时刻只能有一个活动子会话。
 - **能用 UIA 控件模式做的事本来就不动真实指针**，那些场景不需要子会话。
   子会话只解决 canvas、自绘界面这类 UIA 覆盖不到的情况。
@@ -144,9 +180,9 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 
 ```
 IsolatedSession(action="setup")   → 弹一次凭据框，存下来
-IsolatedSession(action="start")   → 起宿主建会话，约 5 秒就绪
-IsolatedSession(action="status")  → 确认 state=active、explorer 在
-IsolatedSession(action="stop")    → 收工，子会话销毁
+IsolatedSession(action="start")   → 起宿主建会话，约 5 秒就绪，预览窗出现
+IsolatedSession(action="status")  → 确认 state=active、explorer 在、预览窗 on_screen
+IsolatedSession(action="stop")    → 收工，宿主退出 + 会话注销
 ```
 
 调查与实测的完整记录（含微软文档没写的那条例外、注入链路验证、账户锁定的教训）
@@ -308,6 +344,8 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 | `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp==0.8.9 windows-mcp --help` 预热 |
 | `IsolatedSession` 报 1909 | 账户被锁了。本机策略是 10 次失败锁 600 秒，等一会儿或换管理员账户解锁 |
 | `start` 一直不到就绪 | `status` 看 `credential_saved` 是不是 true；看 `%TEMP%\dsh-gui-host-ready.txt` 有没有生成 |
+| `start` 说成功但屏幕上找不到预览窗 | `status` 看 `session_detail.preview_window.on_screen`。`false` 说明窗口被挪到屏幕外（`visible=false`）、被最小化、或者被拖走了。`stop` 后用 `start()` 重来；想固定位置传 `left`/`top` |
+| 找不到子会话在干什么 | `Screen` 截的是你自己的桌面，永远不会包含子会话。要看子会话只能看那个预览窗 |
 | `stop` 说关了但会话还在 | 1.2.2 之前的版本只关宿主不注销会话。升级到 1.2.2+，或用 `WTSLogoffSession` 手动清 |
 | `VirtualDesktop` 传错桌面 | 1.2.2 起 `index` 统一从 1 开始。之前 `list` 返回 0 起、`target` 按 1 起解析，会差一位 |
 
