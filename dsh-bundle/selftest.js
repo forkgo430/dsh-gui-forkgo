@@ -99,6 +99,39 @@ if (!existsSync(patchPath)) {
   if (/args:\s*\n\s*-\s*['"]?\.\.?\//.test(patch)) bad('patch 的 args 里出现了相对路径');
   else ok('args 里没有相对路径');
 
+  // command 也不能写死绝对路径。
+  //
+  // 原先是 'C:\Users\<开发者>\.local\bin\uvx.exe' —— 只在开发机上成立。别人装上以后
+  // 这个文件不存在，spawn 直接 ENOENT，而 dsh 只报一句
+  // 「initial connection or tool synchronization failed」，看不出是缺了 uv。
+  // 现在必须由 !!js 探测（用户目录 / UV_INSTALL_DIR / LOCALAPPDATA / cargo / chocolatey）。
+  const commandLine = patch.match(/^\s*command:.*$/m)?.[0] ?? '';
+  if (/^\s*command:\s*['"]?[A-Za-z]:[\\/]/.test(commandLine)) {
+    bad(`command 被写死成绝对路径，换台机器就 spawn 失败：${commandLine.trim()}`);
+  } else if (/^\s*command:\s*!!js/.test(commandLine)) {
+    ok('command 由 !!js 探测（可移植）');
+  } else if (commandLine) {
+    note(`command 是裸名或其它形式，确认一下：${commandLine.trim()}`);
+  } else {
+    bad('patch 里找不到 command');
+  }
+
+  // --from 必须钉版本。
+  //
+  // 裸 `windows-mcp` 在开发机上一直没事，因为 uv 早就缓存了当时的解析结果；换台干净
+  // 机器就会现拉最新版。上游小版本会动 CLI 参数和依赖图，钉住才能复现验证过的行为。
+  // vendor 里的源码树是 0.8.9，Pin 也必须对齐它。
+  const fromLine = patch.match(/^\s*-\s*['"]?(windows-mcp[^'"\n]*)['"]?\s*$/m)?.[1] ?? '';
+  if (/windows-mcp==\d+\.\d+\.\d+/.test(fromLine)) {
+    ok(`--from 钉了版本：${fromLine}`);
+    const pinned = fromLine.split('==')[1];
+    if (pinned !== '0.8.9') {
+      note(`钉的是 ${pinned}，但 vendor 源码树是 0.8.9 —— 升级时两处一起改`);
+    }
+  } else if (fromLine) {
+    bad(`--from 没钉版本（${fromLine}）：干净机器会拉最新版，行为和这里不同`);
+  }
+
   // PYTHONPATH 是本地分支的挂载点。它由 !!js 从本包位置反解出来
   // （../vendor/windows-mcp），不是写死的绝对路径 —— 写死的话别人 clone 下来装，
   // 路径不存在，dsh 不会报错而是静默落回 PyPI 上游：VirtualDesktop 消失、

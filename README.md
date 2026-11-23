@@ -131,7 +131,7 @@ IsolatedSession(action="stop")    → 收工，子会话销毁
 |------|------|
 | Windows 10 / 11 | UI Automation 与虚拟桌面 API 只在 Windows 可用 |
 | DSH | 需要插件系统与 MCP 客户端（`@deepseek-ai/dsh-mcp-client`） |
-| [`uvx`](https://docs.astral.sh/uv/) 在 PATH 上 | 首次启动会拉 Python 3.14 与 pywin32、comtypes、dxcam |
+| [`uvx`](https://docs.astral.sh/uv/) 在 PATH 上 | 首次启动会拉 Python 3.14 与 pywin32、comtypes、dxcam。**没装 uvx 是 Win11 上最常见的报错来源**——`mcp-client(gui): initial connection or tool synchronization failed`，装好 `winget install --id=astral-sh.uv -e` 再重启插件行 |
 
 ## 它怎么工作
 
@@ -263,6 +263,7 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 
 | 问题 | 解决方案 |
 |------|---------|
+| **`mcp-client(gui): initial connection or tool synchronization failed`** | **先看下面那行 `cause`。十有八九是没装 `uvx`，或者装了但 PATH 里没有。`winget install --id=astral-sh.uv -e`，装完重开终端，再关掉插件行重新启用一次** |
 | 工具列表里没有 `mcp__gui__*` | 确认 `include:gui` 是 active；看插件页有没有启动失败 |
 | 插件显示 failed 但手动能起 | DSH 缓存了失败的连接状态，把插件关掉再打开一次 |
 | **改了源码但行为没变** | **删掉 `vendor/windows-mcp` 下的 `__pycache__` 再重启**。`.pyc` 旧字节码会盖住新代码，且毫无征兆 |
@@ -271,7 +272,7 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 | 屏幕提示还是英文 | 同上，`PYTHONPATH` 没指到 `vendor/` 里的源码 |
 | 技能不出现 | 跑 `npm run selftest`；缺 description 会跳过且不报错 |
 | 首次调用很慢 | `uvx` 冷启动要拉 Python 3.14 与依赖，约 5 秒；之后走缓存 |
-| `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp windows-mcp --help` 预热 |
+| `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp==0.8.9 windows-mcp --help` 预热 |
 | `IsolatedSession` 报 1909 | 账户被锁了。本机策略是 10 次失败锁 600 秒，等一会儿或换管理员账户解锁 |
 | `start` 一直不到就绪 | `status` 看 `credential_saved` 是不是 true；看 `%TEMP%\dsh-gui-host-ready.txt` 有没有生成 |
 | `stop` 说关了但会话还在 | 1.2.2 之前的版本只关宿主不注销会话。升级到 1.2.2+，或用 `WTSLogoffSession` 手动清 |

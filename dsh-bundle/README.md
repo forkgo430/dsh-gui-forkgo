@@ -35,18 +35,41 @@ DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务�
 
 ## 依赖
 
-- `uvx` 在 PATH 上（本机：`%USERPROFILE%\.local\bin\uvx.exe`）
-- 依赖由 uvx 从 PyPI 装（`windows-mcp` 要求 Python `>=3.14`：pywin32、comtypes、dxcam 等）
+- **`uvx` 必须在机器上装好**，否则插件行起不来
+- 依赖由 uvx 从 PyPI 装（`windows-mcp==0.8.9` 要求 Python `>=3.14`：pywin32、comtypes、dxcam 等）
+
+装 uv（任选一种）：
+
+```powershell
+winget install --id=astral-sh.uv -e
+# 或
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+装完**重开一个终端**让 PATH 生效，然后 `uvx --version` 确认。
+
+uvx 的位置由 `!!js` 依次探测：`%GUI_UVX%` → `~/.local/bin` → `%UV_INSTALL_DIR%` →
+`%LOCALAPPDATA%\Programs\uv` → `~/.cargo/bin` → chocolatey → `C:\Program Files\uv`。
+都不在就退回裸名 `uvx` 交给 PATH。装在奇葩位置的人设 `GUI_UVX` 指过去即可。
+
+> **报「initial connection or tool synchronization failed」先查这个。**
+> 这句是 dsh 的兜底文案，真实原因在它下面那行 `cause` 里。
+> 十有八九是没装 uv，或者装了但 PATH 里没有。**关掉再装不会自动重连成功** ——
+> 改完要让插件行重新启用一次（`plugin_manager` 关掉 `include:gui` 再打开）。
 
 ## 本地分支怎么接的
 
 **包本体来自包内 vendor 的源码，依赖仍来自 PyPI。**
 
 ```yaml
-args: ['--python','3.14','--from','windows-mcp','windows-mcp','serve','--transport','stdio']
+args: ['--python','3.14','--from','windows-mcp==0.8.9','windows-mcp','serve','--transport','stdio']
 env:
   PYTHONPATH: <本包位置>/vendor/windows-mcp   # !!js 反解，不写死
 ```
+
+`--from` 钉了版本，别改回裸名。裸 `windows-mcp` 在开发机上一直没事，因为 uv 早缓存了
+当时的解析结果；干净机器会现拉最新版，而上游每个小版本都可能动 CLI 参数和依赖图。
+`vendor` 里的源码树是 0.8.9，pin 必须跟它对齐 —— 升级时两处一起改。
 
 不用 `--from <本地目录>`：uvx 对本地目录的构建缓存不看文件 mtime，改完源码它照样复用上一次构建的产物。实测把整个文案改成中文之后跑起来还是旧文案，而且没有任何提示。`PYTHONPATH` 让源码直接生效，改一行就是一行。
 

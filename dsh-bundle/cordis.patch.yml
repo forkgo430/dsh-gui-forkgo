@@ -6,13 +6,54 @@
         # 规则 ^[A-Za-z0-9_-]{1,32}$；改名后旧前缀 mcp__windows__ 不再存在。
         serverName: gui
         transport: stdio
-        command: 'C:\Users\金东权\.local\bin\uvx.exe'
+        # 不能写死 uvx 的绝对路径。
+        #
+        # 原先这里写的是 C:\Users\<某个人>\.local\bin\uvx.exe —— 那只是开发机上的位置。
+        # 换到任何别的机器（包括 Win11），这个文件不存在，spawn 直接 ENOENT，而
+        # dsh 只会把这件事故障成一句「initial connection or tool synchronization failed」，
+        # 用户完全看不出是缺了 uv。
+        #
+        # 现在按顺序探测常见安装位置，全部落空才退回裸名 'uvx'，交给 PATH 兜底。
+        # 探测本身不会抛错，所以配置求值一定成功 —— 配置求值失败会让整个插件行挂掉，
+        # 连"uvx 没装"这个线索都拿不到。
+        command: !!js >-
+          (() => {
+            const fs = process.getBuiltinModule('node:fs');
+            const path = process.getBuiltinModule('node:path');
+            const os = process.getBuiltinModule('node:os');
+            const home = os.homedir();
+            const candidates = [
+              // 手动覆盖优先：uv 装在奇葩位置的人设这一个变量就行。
+              process.env.GUI_UVX || '',
+              path.join(home, '.local', 'bin', 'uvx.exe'),              process.env.UV_INSTALL_DIR
+                ? path.join(process.env.UV_INSTALL_DIR, 'uvx.exe') : '',
+              process.env.LOCALAPPDATA
+                ? path.join(process.env.LOCALAPPDATA, 'Programs', 'uv', 'uvx.exe') : '',
+              path.join(process.env.CARGO_HOME || path.join(home, '.cargo'), 'bin', 'uvx.exe'),
+              path.join(process.env.ProgramData || 'C:\\ProgramData', 'chocolatey', 'bin', 'uvx.exe'),
+              'C:\\Program Files\\uv\\uvx.exe',
+            ];
+            for (const candidate of candidates) {
+              if (!candidate) continue;
+              try {
+                if (fs.existsSync(candidate)) return candidate;
+              } catch {}
+            }
+            // 退回裸名：dsh 的 args/command 直接透传、不过 shell，所以这里不能写 .cmd 包装。
+            // 走到这一步说明 uv 大概率没装，README 的故障排除里写了怎么装。
+            return 'uvx';
+          })()
         args:
           - '--python'
           - '3.14'
-          # 依赖仍由 uvx 从 PyPI 装（上游包提供全部 21 个原有工具、满足 Requires-Python>=3.14）。
+          # 依赖仍由 uvx 从 PyPI 装，但【必须钉版本】。
+          #
+          # 原来写的是裸 windows-mcp，本机早已缓存了 0.8.9 的解析结果，所以一直没事。
+          # 换台干净机器（比如那台 Win11），uvx 会现拉最新的 0.9.0 —— 上游每一次小版本
+          # 都可能动 CLI 参数和依赖图，钉住才能在别人机器上复现你验证过的行为。
+          # vendor 里的源码树就是 0.8.9，两者必须对齐。
           - '--from'
-          - 'windows-mcp'
+          - 'windows-mcp==0.8.9'
           - 'windows-mcp'
           - 'serve'
           - '--transport'

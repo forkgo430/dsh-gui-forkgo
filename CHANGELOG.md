@@ -2,6 +2,43 @@
 
 本项目的版本沿革。包名轨迹：`@local/windows-mcp` → `@local/gui` → **`dsh-gui-forkgo`**。
 
+## 未发布
+
+两处「只在开发机上成立」的配置，换台机器就复现不出来，别人装上直接起不来。
+
+### 修复
+
+**`command` 写死了开发机的 uvx 绝对路径。**（严重：别人的机器上必挂）
+
+`cordis.patch.yml` 里原本是 `'C:\Users\金东权\.local\bin\uvx.exe'`。任何别的机器上
+这个文件都不存在，spawn 直接 ENOENT，而 dsh 把它压成一句
+`mcp-client(gui): initial connection or tool synchronization failed` —— 看不出是缺 uv。
+
+改成 `!!js` 依次探测：`%GUI_UVX%` → `~/.local/bin` → `%UV_INSTALL_DIR%` →
+`%LOCALAPPDATA%\Programs\uv` → `~/.cargo/bin` → chocolatey → `C:\Program Files\uv`，
+全落空才退回裸名 `uvx` 交给 PATH。探测本身不抛错，所以配置求值一定成功——
+求值失败会让整个插件行挂掉，连「uvx 没装」这条线索都拿不到。
+
+**`--from windows-mcp` 没钉版本。**（中：干净机器行为不可复现）
+
+开发机上 uv 早缓存了 0.8.9 的解析结果，所以一直没事。干净机器会现拉最新版
+（现为 0.9.0），上游每个小版本都可能动 CLI 参数和依赖图。已钉成
+`windows-mcp==0.8.9`，与 `vendor` 里的源码树对齐。**升级时两处一起改。**
+
+### 顺带
+
+**删掉面板外面那层光晕。**
+
+顶部提示面板外面原本还套了一圈 `_notice_glow_bitmap`，与四周的框光是同一套蓝色，
+屏幕上同时出现两层蓝。实测面板区蓝通道均值：两层 74.9 → 只有面板 49.3，
+光晕自己贡献了约 22，肉眼能单独看见。框光承担「AI 在控」的主信号，面板只负责
+说按什么键接管，再套一圈同类光晕属于重复表达。
+
+`_notice_glow_bitmap` 本身留着（预览图和几何测试还用），只是实时指示器不再调它。
+
+**自检加了两条检查**：`command` 不许是绝对路径、`--from` 必须钉版本。
+这两类问题都是「改对了也看不出来」，不卡在脚本里就会漏出去。
+
 ## 1.2.2
 
 修四个实测发现的 bug。前两个是严重的资源问题。

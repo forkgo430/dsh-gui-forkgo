@@ -16,7 +16,6 @@ from windows_mcp.desktop import flash_overlay
 from windows_mcp.desktop.control_overlay_art import (
     _BORDER,
     _CURSOR_SIZE,
-    _NOTICE_GLOW_PAD,
     _RIPPLE_FRAMES,
     _RIPPLE_SIZE,
     _breath_opacity,
@@ -24,7 +23,6 @@ from windows_mcp.desktop.control_overlay_art import (
     _edge_bitmap,
     _frame_layer_bitmap,
     _notice_bitmap,
-    _notice_glow_bitmap,
     _ripple_frames,
 )
 from windows_mcp import uia
@@ -236,22 +234,16 @@ def _build_layers(
             banner = _notice_bitmap(width) if notice else None
             if banner is not None:
                 notice_width, notice_height, bitmap = banner
-                # Narrow monitors retain the aura without letting its window spill onto a neighbor.
-                glow_pad = min(_NOTICE_GLOW_PAD, (width - notice_width) // 2)
-                if height <= border + notice_height + 2 * glow_pad:
+                if height <= border + notice_height:
                     continue
+                # 只放面板本体，外面不再套一层光晕。
+                # 原先这里额外挂了一个 _notice_glow_bitmap 图层，与四周的框光是同一套
+                # 蓝色光晕，屏幕上于是同时出现两层蓝：外圈框光 + 面板自身的光圈。
+                # 实测面板区蓝通道均值：两层 74.9 → 只有面板 49.3，光晕自己贡献了约 22，
+                # 是肉眼能单独看见的第二层。框光承担「AI 在控」的主信号，面板只负责说
+                # 按什么键接管，再给它套一圈同类光晕属于重复表达。
                 notice_x = left + (width - notice_width) // 2
-                notice_y = top + border + glow_pad
-                layers.append(
-                    _Layer(
-                        notice_x - glow_pad,
-                        notice_y - glow_pad,
-                        notice_width + 2 * glow_pad,
-                        notice_height + 2 * glow_pad,
-                        _notice_glow_bitmap(notice_width, notice_height, color, glow_pad),
-                        f"{index}_notice_glow",
-                    )
-                )
+                notice_y = top + border
                 layers.append(
                     _Layer(
                         notice_x,

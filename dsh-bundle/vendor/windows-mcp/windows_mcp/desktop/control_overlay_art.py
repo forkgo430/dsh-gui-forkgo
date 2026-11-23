@@ -362,7 +362,12 @@ def _notice_bitmap(screen_width: int) -> tuple[int, int, bytes] | None:
 def _notice_glow_bitmap(
     width: int, height: int, color: tuple[int, int, int], pad: int = _NOTICE_GLOW_PAD
 ) -> bytes:
-    """Anchor the aura at the solid start of the panel's outer fade."""
+    """Panel aura. Retained only for the preview renderer and geometry tests.
+
+    实时指示器已经不再用它：面板外面再套一圈光晕，和四周的框光是同一套蓝色，
+    屏幕上就是两层蓝。渲染面板本体就够，这里留着是因为预览图和几何测试还需要
+    一个「带光晕的面板」作为对照。
+    """
     size = (width + 2 * pad, height + 2 * pad)
     shape = Image.new("L", size)
     # The inset contour meets the panel where its eight-pixel fade begins.
