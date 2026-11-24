@@ -64,6 +64,26 @@ class FrameCache:
             self._last[key] = (digest, image)
         return same, digest
 
+    def last_digest(self, capture_rect: Any) -> str | None:
+        """只读地取出某块区域**最近一次捕获**的帧哈希：不比较、不写入。
+
+        为什么需要这个口子：Screen 要回答调用方「这一帧和上一次给你的一样吗」，
+        而它能拿到的只有三种图 —— 画过标注框的、加了标尺的、或者已经被缩过的。
+        对这三者做哈希都答不了那个问题：标注框的颜色是 ``random.randint`` 生成的，
+        同一块静止的桌面每帧也会得到不同哈希；缩放比例一变哈希也跟着变。
+
+        ``capture_with_hash()`` 记进来的才是**原始像素**的哈希，它只受屏幕内容
+        影响。所以 Screen 从这条只读出口把它取出来用，既不多算一次哈希
+        （3.1ms 也是钱），也不会被上层的画图/缩图污染判断。
+
+        没有任何一帧记录时返回 ``None``（服务刚起、或者刚因为显示器布局变化
+        清过缓存），调用方应当按「变化了」处理。
+        """
+        key = self._key(capture_rect)
+        with self._lock:
+            entry = self._last.get(key)
+        return entry[0] if entry else None
+
     def clear(self) -> None:
         with self._lock:
             self._last.clear()

@@ -64,6 +64,16 @@ metadata:
 `Screen` 支持 `region=[left,top,right,bottom]`，**一定要用**：全屏快照会把任务栏、
 壁纸、无关窗口全塞进来，既贵又乱。锁到你要操作的那一块。
 
+**帧没变就别再量坐标。** 返回里的 `unchanged=true` 说明画面和上一帧一模一样，
+你手上那张图和它上面的坐标仍然有效，直接用，不用重新 `Screen`。
+`force_image=true` 可以强制出图，但只影响当次，不会关掉去重。
+
+> 注意：全屏连拍通常永远是 `unchanged=false`（桌面总有像素在变），
+> **静止区域**才会触发去重。所以 `region` 锁得越准，越容易拿到这个信号。
+
+返回的 `Coordinate Contract` 行会告诉你这张图和屏幕的换算关系。**只认这行**：
+1:1 时直接用，缩放时按它给的倍率乘，控件树里的坐标是屏幕物理像素、**不乘**。
+
 ### 2. 精确定位
 
 拿到坐标后有两种点法：
@@ -73,6 +83,13 @@ metadata:
 
 **坐标不要猜**。看着像 (300,400) 就点 (300,400) 是本技能最常见的失败原因。
 每次点之前问自己：这个坐标是刚才哪一次观察报出来的？
+
+**一次调多步用 `sequence`：** `Input(action="sequence", steps=[{...}, {...}])`，
+最多 24 步，步间默认 120ms（`interval` 可配）。适合「点 A → 填 B → 点确定」这种
+紧凑连动，省往返。
+
+**某一步失败就停下**，会告诉你第几步失败、已完成哪些，不会默默继续。
+`wait` / `wait_for` 这类等步不要用 `sequence`，等的时间不确定，会把后面的步挤在一起。
 
 `Input(action="move")` 只移动不点击，用来触发悬停菜单；`scroll` 在指定点滚动，
 `wheel_times` 控制量。`multi_edit` 一次填多个输入框，`multi_select` 处理多选
@@ -179,6 +196,7 @@ AI 在里面做什么，但 AI 的动作发生在另一个会话里，碰不到�
 | "在那个输入框里填内容" | `Screen` 确认输入框坐标 → `click` 聚焦 → `type` |
 | "打开某某程序" | 先 `pwsh` 试 `Start-Process`；GUI 流程才用 `Programs(mode="launch")` |
 | "等某个东西出现" | `Input(action="wait_for", condition="text_exists")`，别用固定等待 |
+| "连点一串按钮/填一串表单" | `Input(action="sequence", steps=[...])`，一次调用跑完，比一步步省往返 |
 | "帮我整理窗口" | `VirtualDesktop` 建桌面 → `move_window`（只对本进程窗口有效） |
 | "这台机器几个屏、缩放多少" | `Screen(mode="displays")` |
 | "别抢我鼠标" | `IsolatedSession(action="start")` |

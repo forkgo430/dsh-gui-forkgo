@@ -4,6 +4,54 @@
 
 ## 未发布
 
+### 补齐 pilot 的三项省 token 机制
+
+参照 `@momasiku/dsh-pilot` v0.7.4，给已有工具加能力，不新增工具。
+
+**`Screen` 帧去重：** 复用 `frame_cache` 已有的 `frame_hash()`（3.1ms），在返回里报
+`frame_hash` 和 `unchanged`。`unchanged=true` 时明确写「画面自上一帧起没有变化，
+你手上那张图和它的坐标仍然有效」。新增 `force_image` 参数强制出图，只影响当次，
+不关闭去重。
+
+去重对**静止区域**有效。全屏连拍永远是 `unchanged=false`，因为桌面确有像素在变
+（实测 0.098% 的像素持续变化），这是正确行为，不是缺陷。
+
+**缩图比例契约：** 原来只说「可能被缩」，没说比例，模型从缩小图上量坐标直接用就会
+点错。现在分三种情况给明确结论：1:1 时直说不用乘系数并给重算方法；缩放时给出
+「图上 1 像素 = 屏幕 N 像素」；无图时直说没有可换算的图像坐标。不谎称 1:1。
+
+**`Input(action="sequence")`：** 一次调用跑多步，步间默认 120ms（`interval` 可配），
+硬上限 24 步。第 N 步失败就停下，报告第几步失败、已完成哪些，不默默继续。
+单步与批量共用同一份分发逻辑，避免行为差异。
+
+### `IsolatedSession` 增加 shadow 会话接入方式
+
+照豆包 `pip_main.exe` 的序列实现 `-SessionMode shadow`：
+`WTSIsChildSessionsEnabled` → `WTSEnableChildSessions` → `Disconnect` 预热 →
+`AllowPromptingForCredentials(false)` → `put ConnectToShadowSession` → 回读确认。
+
+**实测结论：本机拿不到 shadow。** `C:\Windows\System32\mstscax.dll`
+（10.0.19041.4522，Win10 19045）里 ASCII/UTF-16 双格式搜索，
+`ConnectToShadowSession` 与 `EnableChildSessions` 各 0 次命中，只有
+`ConnectToChildSession`。两者都返回 `0x8000FFFF`（E_UNEXPECTED = 属性名不认）。
+豆包能用是因为它那边 mstscax 版本更新（Win11），或自带了一份。
+
+**child 路径一行未动**，作为备用完整保留；shadow 序列完整实现并逐个打出 hr 值，
+失败时自动回落 child 并在就绪文件里记录实际接入方式。
+
+### 未做成：会话内代理（guard）与 IMsRdpInputSink
+
+豆包往子会话 explorer 注入 `pip_remote.dll`，靠 `PipRemotePipeName_<explorer_pid>`
+管道做自动关 UAC、拦双击、监听窗口事件。这层我们**没做成**，原因：
+
+- 不注入的替代路（父会话 `EnumWindows` 跨会话关子会话窗口）**实测不成立**：
+  父会话能看到子会话顶层窗口数为 0，Windows 按 session 隔离窗口站。
+- `CreateProcessAsUser` 往子会话投进程失败，err=1314
+  （缺 `SeAssignPrimaryToken`/`SeIncreaseQuota`，本会话 Medium 完整性、非提升）。
+- 找到的替代路（RunOnce 投递）机制验证到一半，可靠性未定论，不能算完成。
+- `IMsRdpInputSink` 未做：vtable 顺序无公开头文件可确认，且本机 mstscax 版本已
+  证明落后于豆包，这个接口大概率同样不在。
+
 ### `IsolatedSession` 有了预览窗
 
 原来 `start` 把宿主窗口挪到屏幕外 `(-32000,-32000)`，子会话跑起来用户完全看不见

@@ -7,6 +7,26 @@
 #   -Width/-Height  子会话分辨率
 #   -Visible        是否把宿主窗口摆在屏幕上（true=看得见预览，false=挪到屏幕外）
 #   -Left/-Top      可见时的窗口位置；不传就自动贴到工作区右下角
+#   -SessionMode    子会话接入方式：child（默认，ConnectToChildSession）
+#                   或 shadow（照豆包 pip_main.exe 的序列试 ConnectToShadowSession）
+#
+# -SessionMode shadow 的来路与结论：
+#   豆包 pip_main.exe 的日志（rdp_host.cc）记的是
+#     Disconnect child session → put Server → put_AllowPromptingForCredentials(false)
+#     → put ConnectToShadowSession → Connect
+#   并且它二进制里有 28 处 "ConnectToShadowSession" 字符串，用的是
+#   IMsRdpExtendedSettings（即本脚本 IRdpExt 那个 {302D8188-...} 接口）的 put_Property。
+#   本机照着做三处前置全试过，结果是：
+#     put_Property("ConnectToChildSession")  = 0x00000000   ✅
+#     put_Property("ConnectToShadowSession") = 0x8000FFFF   ❌
+#     put_Property("EnableChildSessions")    = 0x8000FFFF   ❌
+#     put_Property("AllowPromptingForCredentials") = 0x8000FFFF ❌
+#   而且 C:\Windows\System32\mstscax.dll（10.0.19041.4522）里 UTF-16 和 ASCII
+#   都搜不到 "ConnectToShadowSession" / "EnableChildSessions"，
+#   唯一存在的是 "ConnectToChildSession"（映射 TS_PROP_CONNECT_TO_CHILD_SESSION）。
+#   0x8000FFFF 是 E_UNEXPECTED，这里等于「这个版本不认这个属性名」。
+#   所以 shadow 在本机拿不到；本脚本仍然把序列完整实现并逐个打出 hr，
+#   一旦属性被接受就走 shadow，任何一步失败就**自动回落 child**（child 路径一行没动）。
 #
 # 退出时会断开连接，子会话随之销毁。
 #
@@ -30,8 +50,15 @@ param(
     # 收成字符串、自己解析，调用方传什么都行。
     [string]$Visible = "true",
     [int]$Left = -1,
-    [int]$Top = -1
+    [int]$Top = -1,
+    # child = 现有 ConnectToChildSession；shadow = 豆包那条 ConnectToShadowSession。
+    # 收成字符串的理由同 -Visible：-File 调用时参数都按字符串绑定。
+    [string]$SessionMode = "child"
 )
+
+# 宽容解析，认不出的一律当 child —— 这是默认且唯一验证能跑的那条。
+$Mode = $SessionMode.Trim().ToLower()
+if ($Mode -ne 'shadow') { $Mode = 'child' }
 
 # 宽容解析：true/1/yes/on → 可见；其余（含空串）→ 不可见。
 # 空串按不可见处理，因为那多半是调用方拼参数时漏了值，看得见比看不见更该显式要求。
@@ -47,6 +74,8 @@ Add-Type -Namespace W -Name T -MemberDefinition @'
 [DllImport("wtsapi32.dll", SetLastError=true)] public static extern bool WTSGetChildSessionId(out uint id);
 [DllImport("wtsapi32.dll", SetLastError=true)] public static extern bool WTSEnumerateProcessesW(IntPtr h, uint r, uint v, ref IntPtr p, ref uint c);
 [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
+[DllImport("wtsapi32.dll", SetLastError=true)] public static extern bool WTSIsChildSessionsEnabled(out bool enabled);
+[DllImport("wtsapi32.dll", SetLastError=true)] public static extern bool WTSEnableChildSessions(bool enable);
 '@
 
 $refs = @(
@@ -71,6 +100,7 @@ public interface IRdpExt
                                    [MarshalAs(UnmanagedType.Struct)] out object v);
 }
 
+
 public class RdpAxHost : AxHost
 {
     public RdpAxHost() : base("8b918b82-7985-4c24-89df-c33ad2bbfbcd") { }
@@ -94,6 +124,21 @@ public class RdpAxHost : AxHost
     {
         try { var r = (IRdpExt)ocx; object o = v; int hr = r.put_Property("ConnectToChildSession", ref o);
               return "hr=0x" + hr.ToString("X8"); }
+        catch (Exception e) { return "EX " + e.Message; }
+    }
+    // 通用版：豆包那串前置全走这个（ConnectToShadowSession / EnableChildSessions /
+    // AllowPromptingForCredentials），名字和值都由调用方给。
+    // 单独留 SetChild 是因为它是唯一 hr=0 的成功路径，不想让它跟新代码一起回归。
+    public string Put(object ocx, string name, object v)
+    {
+        try { var r = (IRdpExt)ocx; int hr = r.put_Property(name, ref v);
+              return "hr=0x" + hr.ToString("X8"); }
+        catch (Exception e) { var i = e.InnerException; return "EX " + (i != null ? i.Message : e.Message); }
+    }
+    public string GetProp(object ocx, string name)
+    {
+        try { var r = (IRdpExt)ocx; object v = null; int hr = r.get_Property(name, out v);
+              return "hr=0x" + hr.ToString("X8") + " v=" + (v == null ? "<null>" : v.ToString()); }
         catch (Exception e) { return "EX " + e.Message; }
     }
     public string Invoke(object o, string m)
@@ -188,8 +233,64 @@ $H = $form.ClientSize.Height -band -bnot 1
 $ax.Set($ocx, "Server", "localhost") | Out-Null
 $ax.Set($ocx, "DesktopWidth", $W) | Out-Null
 $ax.Set($ocx, "DesktopHeight", $H) | Out-Null
-$r = $ax.SetChild($ocx, $true)
-Write-Host "ConnectToChildSession: $r"
+
+# ---------------------------------------------------------------- 接入方式
+# child 路径保持原样（一行没动），shadow 是照豆包序列新加的。
+# shadow 任何一步的 hr 不是 0 就整段作废、回落 child —— 不允许出现
+# 「shadow 半配好、child 也没打开」这种两个都没成的中间态。
+$accessMode = "child"
+
+if ($Mode -eq 'shadow') {
+    Write-Host "SessionMode=shadow，按 pip_main 的序列尝试"
+
+    # 前置 1：WTS 层的子会话开关。豆包日志里 WTSIsChildSessionsEnabled /
+    # WTSEnableChildSessions 都调了；这里两个都试（WTS API + 控件属性）。
+    $en = $false
+    $hrEn = [W.T]::WTSIsChildSessionsEnabled([ref]$en)
+    Write-Host "  WTSIsChildSessionsEnabled: ret=$hrEn enabled=$en"
+    if (-not $en) {
+        $rEn = [W.T]::WTSEnableChildSessions($true)
+        Write-Host "  WTSEnableChildSessions(true): ret=$rEn"
+    }
+    # 控件上的同名属性。本机这个版本不认，返回 0x8000FFFF，只记录不中断：
+    # 真正的判定标准是下面 ConnectToShadowSession 能不能被接受。
+    Write-Host "  put EnableChildSessions: $($ax.Put($ocx, 'EnableChildSessions', $true))"
+
+    # 前置 2：连接前先 Disconnect 一次（豆包日志里的 "Disconnect child session"）。
+    # 控件刚创建时断开是空操作，失败很正常，不当作错误。
+    Write-Host "  Disconnect(预热): $($ax.Invoke($ocx, 'Disconnect'))"
+
+    # 前置 3：禁掉凭据提示，再设 shadow。
+    # AllowPromptingForCredentials 在 mstscax 里是个脚本属性名（本机
+    # AdvancedSettings9 上没有，DISP_E_UNKNOWNNAME），所以两条路各试一遍。
+    Write-Host "  put AllowPromptingForCredentials: $($ax.Put($ocx, 'AllowPromptingForCredentials', $false))"
+    Try { Write-Host "  adv.AllowPromptingForCredentials: $($ax.Set($ocx.AdvancedSettings9, 'AllowPromptingForCredentials', $false))" }
+    Catch { Write-Host "  adv.AllowPromptingForCredentials: 不可用" }
+
+    $hrShadow = $ax.Put($ocx, 'ConnectToShadowSession', $true)
+    Write-Host "  ConnectToShadowSession: $hrShadow"
+
+    # get 一次确认属性真的被吃进去了（有些属性 put 返回 0 但内部丢弃）
+    $chk = $ax.GetProp($ocx, 'ConnectToShadowSession')
+    Write-Host "  readback ConnectToShadowSession: $chk"
+
+    if ($hrShadow -eq 'hr=0x00000000' -and $chk -like '*v=True*') {
+        $accessMode = "shadow"
+        Write-Host "  → shadow 被接受，走 shadow"
+    } else {
+        # 回落：把 child 打开。shadow 的失败已经打在上面了，这里只补一句结论。
+        Write-Host "  → shadow 不可用（本机 mstscax 10.0.19041.4522 无此扩展属性），回落 child"
+        $rChild = $ax.SetChild($ocx, $true)
+        Write-Host "  ConnectToChildSession: $rChild"
+        $accessMode = "child(shadow 回落)"
+        if ($rChild -ne 'hr=0x00000000') {
+            Write-Host "  回落也失败，无法建立任何子会话"
+        }
+    }
+} else {
+    $r = $ax.SetChild($ocx, $true)
+    Write-Host "ConnectToChildSession: $r"
+}
 
 $adv = $ocx.AdvancedSettings9
 $ax.Set($adv, "EnableCredSspSupport", $true) | Out-Null
@@ -216,9 +317,11 @@ while ($sw.Elapsed.TotalSeconds -lt 60) {
         $procs = Get-Procs $sid
         if ($procs -match 'explorer') {
             $ready = $true
-            Write-Host "登录完成，子会话 $sid，explorer 已起"
+            Write-Host "登录完成，子会话 $sid，explorer 已起  (接入方式: $accessMode)"
             if ($ReadyFile) {
-                "$sid" | Out-File -FilePath $ReadyFile -Encoding utf8 -NoNewline
+                # 内容从「纯 session id」扩成两行：第一行 id（老解析照样能用），
+                # 第二行是实际生效的接入方式，父进程靠它回报 shadow 到底成没成。
+                "$sid`n$accessMode" | Out-File -FilePath $ReadyFile -Encoding utf8 -NoNewline
             }
             break
         }
