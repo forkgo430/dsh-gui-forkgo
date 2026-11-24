@@ -2,7 +2,7 @@
 
 本项目的版本沿革。包名轨迹：`@local/windows-mcp` → `@local/gui` → **`dsh-gui-forkgo`**。
 
-## 未发布
+## 1.3.0
 
 ### 补齐 pilot 的三项省 token 机制
 
