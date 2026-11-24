@@ -42,38 +42,66 @@ display_inventory_tool = None
 
 
 # ---------------------------------------------------------------- 帧去重
-# 「同一会话上一帧的哈希」——对应 pilot 的 lastFrameHashes（lib/index.js:1480）。
+# 「这块屏幕区域上一帧的哈希」——对应 pilot 的 lastFrameHashes（lib/index.js:1480）。
 #
-# 为什么不是全局一个 key：Screen 支持 display / region / 标注框 / grid，四个参数
-# 组合出的是**不同的图**。全桌面没变不代表某个 region 没变，标了框的图和没标框的
-# 图也不是同一张（框的颜色是 random 生成的，标框模式下连"像素一样"都很难成立）。
-# 所以 key 里要带会话、显示区域、region、标注框、grid、模式。
+# **key 里为什么不再带 MCP 会话**（原来第一维就是 ctx.session_id）：
+#
+# 屏幕是全局唯一的物理资源，不随 MCP 会话变化。"上一帧"对使用者来说就是
+# 「同一块截图范围上一次拍出来是什么样」，跟"哪条连接问的"没有关系。
+# 而 ctx.session_id 在 DSH 那条路上**每次请求都是新 UUID**：DSH 的 MCP 客户端
+# 协商的是 2026-07-28 协议，这一代协议下每个请求自成一条连接，FastMCP 于是
+# 每次现造会话标识（fastmcp/server/context.py 的 session_id 文档里写得很明白：
+# "every request is its own connection and gets a new identifier, so it can't be
+# used to share data between tool calls"）。实测日志里连拍两次是两个不同的 UUID，
+# 于是 previous 永远取不到值、unchanged 永远 false —— 去重等于没开。
+#
+# 直连 stdio 之所以"看起来正常"，恰恰是因为那边 ctx.session_id 抛 RuntimeError
+# 被吞成 __no_session__，所有调用退化成同一个 key —— 那正好就是全局去重。
+# 换句话说：直连能工作是因为去重**退化成全局**，不是因为"按会话分开"是对的。
+#
+# 顺带修掉一个内存泄漏：按会话分 key 时，DSH 每调一次就往 _FRAME_HASH_STATE 里
+# 塞一个永不回收的新条目。现在 key 只由截图范围决定，天然有界；再加一道
+# _FRAME_HASH_MAX 上限兜底，防 region 满天飞时无界增长。
+#
+# key 里仍然要带 display / region / 标注框 / grid / 模式：这几个参数组合出来的
+# 是**不同的图**。全桌面没变不代表某个 region 没变，标了框的图和没标框的图也不
+# 是同一张（框的颜色是 random 生成的，标框模式下连"像素一样"都很难成立）。
 _FRAME_HASH_STATE: dict[tuple, str] = {}
 _FRAME_HASH_LOCK = threading.Lock()
 
+# 去重状态的条目上限。正常用法只有几十条（region/display 的有限组合），这个上限
+# 只为兜住"有人拿随机 region 刷"的极端情况：超了就从最久没被写入的那条开始扔。
+# 扔掉的代价仅仅是那块区域下一次判成"变了"（多一张图），不会答错。
+_FRAME_HASH_MAX = 256
+
+# 去重命中时的说明文案。
+#
+# 为什么写得这么啰嗦、还要反问调用方一句"你手上有没有图"：去重状态是进程级
+# **全局**的（理由见上面 _FRAME_HASH_STATE 的注释），它不区分调用方。两个智能体
+# 同时用这个工具时完全可能这样：A 拍了区域 X，B 紧接着拍区域 X 且画面没变，
+# 于是 B 也拿到 unchanged=true。对 B 来说"画面没变"是真的，但**B 手上并没有那张
+# 图** —— 如果文案直接说"你手上那张图仍然有效"，B 就会拿着一份不存在的图像去
+# 量坐标，这是静默错误。
+#
+# 唯一诚实且可自证的做法是把两件事拆开说：
+#   1. 画面没变（unchanged: true）—— 服务端能确定的事实，说满；
+#   2. 这次附图了没有（Image Attached: false）—— 也是服务端能确定的事实；
+#   3. 要不要复用上一帧 —— 这是**调用方自己**才知道的事（它手上有没有图），
+#      所以文案把判断依据和补救动作明确交回给调用方：没有图就 force_image=true。
+# 这样做的代价最多是一次多余往返，而不是一次基于幻觉坐标的误点击。
 UNCHANGED_NOTE = (
-    "Frame Unchanged Note: 画面自上一帧起没有变化（同一会话、同一块截图范围）："
-    "你手上那张图和它给出的坐标仍然有效，不必重新测量，也不必再要一张图。"
-    "这张图按去重规则没有重复附上；确实需要重出图就传 force_image=true。"
+    "Frame Unchanged Note: 这一帧和本进程上一次拍同一块截图范围的结果像素完全一致，"
+    "所以按去重规则没有重复附图（Image Attached: false）。"
+    "这个「上一帧」是**进程级全局**的，不区分是哪个调用方拍的 —— 如果同时有别的"
+    "智能体在拍同一块区域，那帧可能是它拍的。请先核对一件事：你手上到底有没有"
+    "这块区域的上一帧图像？"
+    "有 -> 那张图和它给出的坐标仍然有效，直接用，不必重新测量，也不必再要图；"
+    "没有（例如你这次才第一次拍这块区域）-> 立刻带 force_image=true 再调一次，"
+    "这一帧就会附图。force_image 只影响本次是否附图，不会把去重关掉。"
 )
 
 
-def _session_key(ctx: Any) -> str:
-    """取当前 MCP 会话的标识，用来把「上一帧」按会话隔开。
-
-    pilot 用的是 sessionId（lib/index.js:820）；Python 这边能拿到的是
-    ``Context.session_id``。拿不到时（直接调用、单元测试、宿主不给 session）
-    退化成 ``__no_session__``：效果等于"这个进程只有一个会话"，比抛错有用。
-    """
-    try:
-        sid = getattr(ctx, "session_id", None)
-    except Exception:  # noqa: BLE001 — 取 session 信息失败不该让截图挂掉
-        sid = None
-    return sid or "__no_session__"
-
-
 def _frame_key(
-    ctx: Any,
     *,
     display: list[int] | None,
     region: list[int] | None,
@@ -82,9 +110,12 @@ def _frame_key(
     fast: bool,
     tree_signature: str | None = None,
 ) -> tuple:
-    """「同一帧」的判定范围。见文件上方 _FRAME_HASH_STATE 的注释。"""
+    """「同一帧」的判定范围：只由截图范围本身决定，**不含会话维度**。
+
+    见文件上方 _FRAME_HASH_STATE 的注释：会话维度是错的（屏幕是全局资源），
+    而且它在 DSH 那条路上每次都变，等于把去重整个关掉。
+    """
     return (
-        _session_key(ctx),
         tuple(display or ()),
         tuple(region or ()),
         bool(annotate),
@@ -92,6 +123,27 @@ def _frame_key(
         bool(fast),
         tree_signature,
     )
+
+
+def _remember_frame(key: tuple, digest: str) -> str | None:
+    """记下这一帧的哈希，返回同一 key 上一次的哈希（没记录过就是 None）。
+
+    读+写在**同一把锁**里：并发调用时不会出现两次都读到同一个 previous 的竞态
+    （那会让两个调用同时判成"变了"，只是少省一次图，但既然锁是现成的就没必要留）。
+    写入时把 key 挪到字典末尾（先 pop 再赋值），于是淘汰顺序是"最久没被写入"而不是
+    "最早建出来"，频繁用的区域不会被冷区域挤掉。
+    """
+    with _FRAME_HASH_LOCK:
+        previous = _FRAME_HASH_STATE.pop(key, None)
+        _FRAME_HASH_STATE[key] = digest
+        while len(_FRAME_HASH_STATE) > _FRAME_HASH_MAX:
+            oldest = next(iter(_FRAME_HASH_STATE))
+            # 刚写进去的就是最新的一条，理论上不会成为 oldest；留着这层判断是为了
+            # 万一 _FRAME_HASH_MAX 被调到 0 时不至于把刚写的数据删掉。
+            if oldest == key:
+                break
+            del _FRAME_HASH_STATE[oldest]
+        return previous
 
 
 def _raw_frame_hash(desktop_state: Any) -> str | None:
@@ -181,6 +233,33 @@ def _coordinate_contract_lines(desktop_state: Any) -> list[str]:
     return lines
 
 
+def _unchanged_coordinate_lines(desktop_state: Any) -> list[str]:
+    """去重命中时的坐标说明：只说「按你手上那一帧的契约来」。
+
+    为什么不能复用 _coordinate_contract_lines()：那个函数是按"本次交付了多大一张图"
+    算倍率的，而去重命中时图会被剥掉。对着没有给出去的图讲"本帧按 200x100 交付、
+    图上 1 像素 = 屏幕 1 像素"，等于暗示调用方它拿到了图，和实际正好相反。
+
+    这里唯一能确定、也唯一有用的话是：画面没变所以倍率也没变，用你手上那一帧的契约；
+    没有那一帧就别猜。区域原点仍然要给 —— 它只取决于这次 request 的 region 参数，
+    和图有没有附无关，写出来不会误导。
+    """
+    region = getattr(desktop_state, "screenshot_region", None)
+    lines: list[str] = []
+    if region is not None:
+        lines.append(
+            f"Coordinate Space: 本帧是区域/单屏截图，图上 (0,0) 对应屏幕 "
+            f"({region.left},{region.top})，图上 (x,y) 对应屏幕 "
+            f"({region.left}+x,{region.top}+y)；Input 一律填屏幕绝对坐标。"
+        )
+    lines.append(
+        "Coordinate Contract: 本次未附图（去重命中），倍率和你手上那一帧完全相同，"
+        "按那一帧给出的契约换算即可。手上没有那一帧就不要推算倍率 —— "
+        "带 force_image=true 重新调用，会附图并重新给出契约。"
+    )
+    return lines
+
+
 def _rect_to_dict(rect: Any) -> dict[str, int] | None:
     if rect is None:
         return None
@@ -238,11 +317,16 @@ def register(mcp, *, get_desktop, get_analytics):
             "rather than silently capturing elsewhere. "
             "Set save_path to an absolute file path (or an existing directory for a timestamped name) to "
             "write the image as PNG; existing files are never overwritten, and the saved path is reported. "
-            "Frame deduplication: the answer carries frame_hash and unchanged. unchanged=true means this "
-            "frame is pixel-identical to the last frame this session was shown for the same capture "
-            "scope (display/region/annotation/grid), so the image is NOT attached again and the "
-            "coordinates you already have are still valid — do not re-measure, and do not ask for the "
-            "picture again. Pass force_image=true to get the image anyway. "
+            "Frame deduplication: the answer carries frame_hash, unchanged and image_attached. "
+            "unchanged=true means this frame is pixel-identical to the last frame captured for the "
+            "same capture scope (display/region/annotation/grid) — that comparison is process-wide "
+            "and does NOT distinguish callers, because the screen is one physical resource, so "
+            "another agent may have captured that frame. When unchanged=true the image is NOT "
+            "attached again; check Image Attached: if you already hold the previous frame for this "
+            "scope its coordinates are still valid — do not re-measure and do not ask for the "
+            "picture again; if you do not hold it, call again with force_image=true to get the "
+            "image. Pass force_image=true to get the image anyway; it only affects whether this "
+            "call attaches the image, never the dedupe bookkeeping. "
             "Coordinate contract: the answer states, in one line, how image pixels relate to screen "
             "pixels (image pixel = screen pixel at original size, or the exact multiplier when the frame "
             "was downscaled). Coordinates in the UI tree are always screen physical pixels and need no "
@@ -339,12 +423,11 @@ def register(mcp, *, get_desktop, get_analytics):
         # 一句中文提示，就能直接复用上一帧的坐标，跳过整轮重新测量。
         #
         # 只有**这次真出了图**才谈得上"这一帧"：full 模式不传 use_vision 时压根没截图，
-        # 缓存里那份哈希是上一次开会话留下的，拿它判断会答出一个没有依据的 unchanged。
+        # 缓存里那份哈希是上一次留下的，拿它判断会答出一个没有依据的 unchanged。
         frame_digest = _raw_frame_hash(desktop_state) if desktop_state.screenshot is not None else None
         unchanged = False
         if frame_digest:
             key = _frame_key(
-                ctx,
                 display=display_norm,
                 region=region_norm,
                 annotate=annotate,
@@ -361,12 +444,11 @@ def register(mcp, *, get_desktop, get_analytics):
                     else None
                 ),
             )
-            with _FRAME_HASH_LOCK:
-                previous = _FRAME_HASH_STATE.get(key)
-                _FRAME_HASH_STATE[key] = frame_digest
-            # force_image=true 的语义和 pilot 的 args.forceImage 一致：**只影响是否
-            # 跳过这一张图**，不影响哈希记账 —— 否则"强制出图一次"会让下一帧的
-            # 比较基准变成空，等于自己把去重关掉一轮。
+            # 记账（更新 _FRAME_HASH_STATE）和"这次附不附图"是两件事，不能混：
+            #   - 记账必须无条件做，否则 force_image 一次就会把比较基准清空，
+            #     等于自己把去重关掉一轮（pilot 的 args.forceImage 也是这样）；
+            #   - 附图则看 force_image：它只影响这一张图附不附。
+            previous = _remember_frame(key, frame_digest)
             unchanged = previous == frame_digest and not force_image
 
         response = build_snapshot_response(
@@ -384,9 +466,27 @@ def register(mcp, *, get_desktop, get_analytics):
         if frame_digest:
             extra_lines.append(f"Frame Hash: {frame_digest}")
         extra_lines.append(f"Frame Unchanged: {'true' if unchanged else 'false'}")
+        # "附没附图"要单独说一句，不能只靠 unchanged 反推，也不能靠"算出来的图"反推。
+        #
+        # 去重状态是进程级全局的（见 _FRAME_HASH_STATE 的注释），所以 unchanged=true
+        # 只证明「画面没变」，不证明「你手上已经有这张图」：别的智能体可能刚拍过同一块
+        # 区域。而这一帧到底有没有作为附件返回，是服务端此刻能百分之百确定的事实 ——
+        # 把它显式写出来，调用方就有据可查地判断自己该不该复用上一帧的坐标。
+        #
+        # 判据是"最终会不会附图"（unchanged 为真时图会在下面被剥掉），不是
+        # "capture 有没有生成图"，两者在不命中去重时才会同时为真。
+        attach_image = not unchanged and any(not isinstance(item, str) for item in response)
+        extra_lines.append(f"Image Attached: {'true' if attach_image else 'false'}")
         if unchanged:
             extra_lines.append(UNCHANGED_NOTE)
-        extra_lines.extend(_coordinate_contract_lines(desktop_state))
+        # 坐标契约也要跟着"这次到底有没有图"走：unchanged 时图被剥掉了，再说一遍
+        # "本帧按原始尺寸 NxM 交付、图上 1 像素 = 屏幕 1 像素"就是指着一张没给出去的图
+        # 讲换算，反而会把调用方推向"我好像有图"。这种时候要说的只有一句：按你手上
+        # 那一帧的契约来，没有图就 force_image。
+        if unchanged:
+            extra_lines.extend(_unchanged_coordinate_lines(desktop_state))
+        else:
+            extra_lines.extend(_coordinate_contract_lines(desktop_state))
         if isinstance(response[0], str):
             response[0] = response[0] + "\n" + "\n".join(extra_lines) + "\n"
 

@@ -286,15 +286,38 @@ def _build_mcp() -> FastMCP:
             if status["state"] == "ai":
                 applied = control_overlay.set_active(True, generation=generation)
                 if applied and generation is not None:
+                    # 只有 ack 成功才真正挂上叠加层；由于注册了 health probe，
+                    # 这也是 `_visual_armed` 唯一的置 True 路径。
                     controller.arm_visible(status["generation"])
+                elif generation is not None:
+                    # set_active 返回 False（ack 超时、overlay 在被服务中但没画出
+                    # 来、或 generation 已经过期）→ `arm_visible` 不会被调用。
+                    #
+                    # 以前这里什么都不做，于是"叠加层没显示"完全不留痕迹，
+                    # checkpoint 再拿 `_suppress` 当许可证把第一步拒掉。
+                    # 现在记一次失败原因：**只记账，不释放控制权**。叠加层是给人
+                    # 看的提示，它失败不该演变成"工具一步都用不了"。
+                    controller.note_arm_failure(
+                        f"indicator_not_applied:generation={generation}"
+                    )
             elif status["state"] == "takeover_pending":
                 control_overlay.set_pending(True, generation=generation)
             else:
                 control_overlay.set_active(False, generation=generation)
         except Exception as exc:
-            # A missing visual indicator invalidates the AI control lease.
-            release_control(f"AI control indicator failed: {describe_failure(exc)}")
-            logger.exception("AI control indicator failed; releasing physical input")
+            # 叠加层抛错（窗口建不出来、线程死了、capture 锁死等）：记失败并降级，
+            # 不再调用 release_control() 把整个 AI 租约打成 unavailable。
+            #
+            # 为什么不释放：`set_active` 抛错时，`desktop` 的其它部分（输入注入、
+            # 截图、UIA）都还是好的。以前这里 fail-open 到 unavailable，一次临时的
+            # 窗口创建失败就会让整轮工具调用全部 CONTROL_UNAVAILABLE——叠加层成了
+            # 单点故障。现在改成：记账 + 警告一次，物理输入仍由 `_suppress`
+            # 和 `arm_visible` 自己的规则管，控制权交给 `fail_open` 之外的路径
+            # （hook 故障、心跳超时）去判定。
+            reason = describe_failure(exc)
+            controller.note_arm_failure(f"indicator_error:{reason}")
+            logger.warning("AI control indicator failed (%s); continuing without it", reason)
+            logger.debug("AI control indicator failure detail", exc_info=exc)
 
     def release_control(reason: str) -> None:
         # Fail open without letting the reason plumbing raise or block.

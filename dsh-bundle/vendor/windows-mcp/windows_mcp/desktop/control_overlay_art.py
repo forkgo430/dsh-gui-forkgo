@@ -42,16 +42,43 @@ _BADGE_GAP = 8
 # next one and finally to Latin faces: the notice must render on any Windows
 # install, and a missing glyph would come out as tofu rather than as English.
 #
-# 字体选择：本机 412 个字体里逐套渲染对比过（等线 / 微软雅黑 / 微软正黑 /
-# 黑体 / 华文细黑 / Adobe 黑体）。等线（Deng）在中英混排上最干净——雅黑的
-# 中文笔画在小字号下发软发灰，黑体太硬，“AI”与中文之间的空隙也更大。
-# 等线不在时才有必要回退到雅黑。
-_TITLE_FACES = ("Dengb.ttf", "msyhbd.ttc", "simhei.ttf", "seguisb.ttf")
-_HINT_FACES = ("Deng.ttf", "msyh.ttc", "simsun.ttc", "segoeui.ttf")
+# 字体选择：本机所有中文字体逐套渲染对比过。结论是 **Noto Sans SC（思源黑体）**
+# 最好看 —— 笔画粗细均匀、字重适中，中英文混排时基线和字面高度都协调。
+#
+# 为什么换掉原来的等线（Deng）：
+#   等线 Bold 的横画偏粗、竖画偏细，28px 下笔画边缘发硬，中文的"口"部框架
+#   （正在、这台）显得局促；它的英文字母又偏窄，"AI" 和后面的中文之间会
+#   留出一块不自然的空隙。
+#   微软雅黑 Bold 反过来——太粗，在深色背景上笔画粘连，小字号（提示行 19px）
+#   尤其发糊。Noto Sans SC 在 19px 上依然清晰，那是因为它的字面比雅黑略小、
+#   留白更多，同样字号下反而更透气。
+#
+# 字体名里的空格和括号是 Windows 的注册名，必须原样写。
+# OTF 是 CFF 轮廓，Pillow 的 truetype 能直接读，和 TTF 没区别。
+# 回退链保留等线 → 雅黑 → 黑体，保证没装思源的机器也能出字。
+_TITLE_FACES = (
+    "Noto Sans SC Medium (TrueType).otf",
+    "Noto Sans SC Bold (TrueType).otf",
+    "Dengb.ttf",
+    "msyhbd.ttc",
+    "simhei.ttf",
+    "seguisb.ttf",
+)
+_HINT_FACES = (
+    "Noto Sans SC (TrueType).otf",
+    "Noto Sans SC Medium (TrueType).otf",
+    "Deng.ttf",
+    "msyh.ttc",
+    "simsun.ttc",
+    "segoeui.ttf",
+)
 
-# 字号阶梯：标题比正文大 9px。28/19 是逐档试出来的——标题再小就发虚，
-# 正文再小（原来的 16）在 1920 屏上隔着房间看不清。
-_TITLE_SIZE = 28
+# 字号阶梯：标题 30、提示 19。
+#
+# 标题从 28 提到 30：Noto Sans SC 的字面比等线小一圈，同样 28 看着比原来矮，
+# 30 才回到原来的视觉高度。提示行维持 19 —— 它是次要信息，跟着放大只会抢视线。
+# 两者相差 11px，层级关系比原来的 9px 更清楚。
+_TITLE_SIZE = 30
 _HINT_SIZE = 19
 # 面板不透明度：必须完全不透明。
 #

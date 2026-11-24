@@ -55,6 +55,19 @@ def run_control_worker(owner: Any, interactive_desktop: Callable[[], bool]) -> N
                     break
                 owner._handle(event)
             owner._handle(("tick",))
+            # 一轮工具调用结束后的宽限期检查。
+            #
+            # 为什么放在 worker 里而不是 `end_call` 里：`end_call` 跑在 MCP 事件
+            # 循环的请求收尾路径上，在那里等 2 秒会直接卡住后续调用；而且"宽限期
+            # 到了"这件事本质是时间驱动的，本来就需要一个定时 tick。
+            #
+            # 这里有 `wait(0.01)` 的节拍，所以实际撤光延迟最多比宽限期多半帧，
+            # 用户感知不到。
+            try:
+                if owner._glow_release_due(time.monotonic()):
+                    owner._notify(owner.status())
+            except Exception:  # noqa: BLE001 — 撤光失败不该拖垮 worker
+                pass
             # 智能体长时间没动作就自动交还控制权。
             # 否则调用方忘了 release()，叠加层会一直挂在屏幕上——
             # 实测踩过七十多分钟没撤的。
