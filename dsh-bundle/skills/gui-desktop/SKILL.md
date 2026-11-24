@@ -26,7 +26,7 @@ metadata:
 | `Scrape` | 抓网页 | `url` |
 | `ControlStatus` | 谁在控制 | `release=true` 交还 |
 | `VirtualDesktop` | 任务栏那几组窗口 | `action` 八种 |
-| `IsolatedSession` | 独立子会话（不抢键鼠） | `action`：status/setup/start/stop/inject/forget |
+| `IsolatedSession` | 独立子会话（不抢键鼠） | `action`：status/setup/start/stop/inject/guard/forget |
 
 **参数认 mode，不认工具。** 从 15 个合并成 8 个之后，`mode` 决定参数的含义：
 `System(mode="read", path="C:\\a.txt")` 读文件，`System(mode="reg_get", path="HKCU:\\X")`
@@ -146,6 +146,7 @@ metadata:
 | `start` | 起一个常驻宿主进程建子会话，默认 1280×720 | 约 16 秒 |
 | `stop` | 让宿主断开，`WTSLogoffSession` 注销会话 | 约 2 秒 |
 | `inject` | 往子会话的 explorer 里注入 DLL | 需要 `dll_path` |
+| `guard` | 会话内守护：自动关 #32770 对话框（UAC、报错框、安装确认框） | `enable` 挂/撤，`close_dialogs` 关不关，`keep_titles` 白名单 |
 | `forget` | 删掉存下的凭据 | — |
 
 **`start` 会在主屏右下角摆一个预览窗**，里面是子会话的实时画面。用户能看见
@@ -159,6 +160,14 @@ AI 在里面做什么，但 AI 的动作发生在另一个会话里，碰不到�
 唯一的途径是看预览窗——所以别把 `visible` 关掉，除非用户明确要求。
 
 `status` 的 `session_detail.preview_window.on_screen` 告诉你窗口到底在不在屏幕上。
+
+**`guard` 是唯一能碰到子会话内部的通道。** 父会话看不见也碰不到子会话的窗口
+（Windows 按 session 隔离窗口站，实测父会话枚举到的子会话顶层窗口数是 0），
+所以 UAC、报错框、安装确认框这类弹窗只能靠守护进程在子会话里面关掉。
+
+`start` 默认已经挂上它，`stop` 自动撤下。要确认它活没活，看 `status` 里的
+`guard.running`（心跳）和 `guard.closed_total`（关了几个）。想让它别关窗只挂载，
+传 `start(close_dialogs=false)`；想保留某些标题不关，用 `keep_titles` 传分号分隔的白名单。
 
 **子会话的存活绑在宿主进程上。** 宿主一退会话立刻掉线。插件重载不影响它 ——
 宿主是独立进程。用完记得 `stop`，不然会堆孤儿会话，每个几百 MB。

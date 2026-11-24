@@ -39,18 +39,43 @@
 **child 路径一行未动**，作为备用完整保留；shadow 序列完整实现并逐个打出 hr 值，
 失败时自动回落 child 并在就绪文件里记录实际接入方式。
 
-### 未做成：会话内代理（guard）与 IMsRdpInputSink
+### 会话内守护（guard）：补上豆包 `pip_remote.dll` 那一半
 
-豆包往子会话 explorer 注入 `pip_remote.dll`，靠 `PipRemotePipeName_<explorer_pid>`
-管道做自动关 UAC、拦双击、监听窗口事件。这层我们**没做成**，原因：
+豆包往子会话 explorer 注入 `pip_remote.dll`，靠命名管道做自动关 UAC、拦双击、监听
+窗口事件。这层能力我们补上了，但没走注入——**这台机器没有编译器**，做不了 DLL。
+换了一条等价且更轻的路：
 
-- 不注入的替代路（父会话 `EnumWindows` 跨会话关子会话窗口）**实测不成立**：
-  父会话能看到子会话顶层窗口数为 0，Windows 按 session 隔离窗口站。
-- `CreateProcessAsUser` 往子会话投进程失败，err=1314
-  （缺 `SeAssignPrimaryToken`/`SeIncreaseQuota`，本会话 Medium 完整性、非提升）。
-- 找到的替代路（RunOnce 投递）机制验证到一半，可靠性未定论，不能算完成。
-- `IMsRdpInputSink` 未做：vtable 顺序无公开头文件可确认，且本机 mstscax 版本已
-  证明落后于豆包，这个接口大概率同样不在。
+**建会话之前把守护脚本挂到 HKCU 的 Run 键，子会话登录时系统会在子会话里执行它。**
+
+HKCU 是各会话共享的同一份注册表，子会话读到的是同一个 Run 键。守护进程因此天然
+跑在子会话内部，能看见并操作那个会话的窗口——这正是父会话做不到的事。
+
+为什么必须先排除「父进程直接关窗」这条路：Windows 按 session 隔离窗口站，
+**实测父会话枚举到的子会话顶层窗口数是 0**（自己的能看到 300 多个）。
+`CreateProcessAsUser` 也走不通：本进程 token 只有 6 个特权，没有
+`SeAssignPrimaryToken`/`SeIncreaseQuota`/`SeTcb`/`SeDebug`，Medium 完整性、非提升，
+报 err=1314。
+
+**实测数据**（本机 Win10 19045）：
+
+```
+guard 在子会话 6 里跑起来：mySession=6, consoleSession=1
+枚举到子会话里的 #32770 对话框，PostMessage(WM_CLOSE)=True
+heartbeat running=True, closed_total=1
+stop 后 Run 键撤下、状态文件清除、无孤儿会话
+```
+
+**一个必须知道的坑**：Run 键的值**必须指向一个 .cmd 包装**，不能直接写 pwsh 命令行。
+Winlogon 启动 Run 项时不走 cmd，直接把整串当程序名解析，带引号的长命令行会失败——
+第一次实现就是直接写 pwsh 命令行，子会话里什么都没启动，换成 .cmd 才成。
+另外 .cmd 要用系统默认编码（GBK）写，UTF-8 会把路径里的中文读成乱码。
+
+接口：`IsolatedSession(action="guard", enable=..., close_dialogs=..., keep_titles=...)`。
+`start` 默认已自动挂载；`stop` 会自动撤下（Run 键是全局的，留着会让用户下次
+自己登录也被拉起一个守护进程）。
+
+**没做**：`IMsRdpInputSink`。vtable 顺序无公开头文件可确认，且本机 mstscax 版本
+已证明落后于豆包，该接口大概率不在。
 
 ### `IsolatedSession` 有了预览窗
 

@@ -20,6 +20,24 @@ from windows_mcp.infrastructure import with_analytics
 from windows_mcp.desktop import child_session
 
 
+def _truthy(value: object, default: bool = True) -> bool:
+    """把 bool / 字符串开关统一成 bool。
+
+    MCP 客户端有时把布尔参数当字符串发（"false" / "0"），直接 bool("false")
+    会得到 True —— 那会把用户明确关掉的功能又打开。这里显式列一遍假值。
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("false", "0", "no", "off", ""):
+            return False
+        return True
+    return bool(value)
+
+
 def register(
     mcp: Any,
     *,
@@ -47,6 +65,11 @@ def register(
             "action='stop' 让宿主断开，子会话随之销毁。"
             "action='inject' 把 DLL 注入子会话的 explorer.exe"
             "（同用户进程不需要 SeDebugPrivilege）。"
+            "action='guard' 管理会话内守护：子会话里跑的代理，负责自动关掉 #32770 对话框"
+            "（UAC、报错框、安装确认框这类会卡住自动化的东西）。父会话看不见也碰不到"
+            "子会话的窗口，这层代理是唯一能碰到它们的手段。enable=true 挂载、false 卸下；"
+            "close_dialogs 控制挂上之后关不关窗；keep_titles 用分号分隔标题白名单。"
+            "start 默认已经自动挂载，一般不用单独调它。"
             "action='forget' 删掉存下的凭据。"
             "约束：一个系统同时只能有一个活动子会话；能用 UIA 控件模式做的事"
             "本来就不动真实指针，那些场景不用开子会话。"
@@ -68,6 +91,9 @@ def register(
         visible: bool | str = True,
         left: int = -1,
         top: int = -1,
+        enable: bool | str = True,
+        close_dialogs: bool | str = True,
+        keep_titles: str = "",
         ctx: Context = None,
     ) -> dict[str, object]:
         act = (action or "status").strip().lower()
@@ -75,6 +101,9 @@ def register(
         if act == "status":
             caps = child_session.capabilities()
             result: dict[str, object] = {"action": "status", **caps}
+
+            # guard 是唯一能看到子会话内部的通道，status 里必须如实报它的死活。
+            result["guard"] = child_session.guard_status()
 
             # 子会话活着就补一份进程概况
             el = child_session.find_child_explorer()
@@ -179,19 +208,48 @@ def register(
             }
 
         if act == "start":
-            # visible 允许传字符串（"false" / "0"），MCP 客户端有时候不做类型转换。
+            # visible / guard 相关开关都允许传字符串，MCP 客户端有时候不做类型转换。
             if isinstance(visible, str):
                 show = visible.strip().lower() not in ("false", "0", "no", "off", "")
             else:
                 show = bool(visible)
             ok, msg, detail = child_session.start_host(
                 width=int(width), height=int(height),
-                visible=show, left=int(left), top=int(top))
+                visible=show, left=int(left), top=int(top),
+                guard=_truthy(enable),
+                guard_close_dialogs=_truthy(close_dialogs),
+                guard_keep_titles=keep_titles or "")
             return {
                 "action": "start",
                 "ok": ok,
                 "message": msg,
                 "session": detail,
+            }
+
+        if act == "guard":
+            # 单独管理守护：start 已经默认挂载，这个 action 用于事后开关，
+            # 或者在 guard 被别的东西撤掉之后重新挂上。
+            if not _truthy(enable):
+                removed = child_session.disarm_guard()
+                return {
+                    "action": "guard",
+                    "armed": False,
+                    "removed": removed,
+                    "message": ("已从 Run 键撤下 guard，下次建会话不会再启动它。"
+                                if removed else "Run 键上没有 guard，无需撤下。"),
+                }
+            ok, msg = child_session.arm_guard(
+                close_dialogs=_truthy(close_dialogs),
+                keep_titles=keep_titles or "")
+            return {
+                "action": "guard",
+                "armed": ok,
+                "ok": ok,
+                "message": msg,
+                "hint": ("guard 是 Run 键拉起的，只对**之后新建**的子会话生效；"
+                         "当前会话里已经在跑的那个不会因为改配置而重载。"
+                         if ok else None),
+                "status": child_session.guard_status(),
             }
 
         if act == "stop":

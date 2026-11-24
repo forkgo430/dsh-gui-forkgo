@@ -90,6 +90,8 @@ MODES = {
         "start": "possible",
         "stop": "possible",
         "inject": "possible",
+        # guard 只改 HKCU 的 Run 键，不碰当前桌面，也不影响用户手上的任何窗口。
+        "guard": "other",
         "forget": "possible",
     },
 }

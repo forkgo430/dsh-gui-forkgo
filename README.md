@@ -168,6 +168,34 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 `on_screen` 是三个 bool 的结论。窗口被拖到屏幕外、被最小化、或者用了
 `visible=false`，这里都会是 `false`，不用自己去推。
 
+### 会话内守护（guard）
+
+子会话里跑着一个守护进程，负责关掉 `#32770` 对话框——UAC、报错框、安装确认框
+这些会卡住自动化的东西。
+
+**为什么必须它来做**：父会话看不见也碰不到子会话的窗口。Windows 按 session
+隔离窗口站，实测父会话枚举到的子会话顶层窗口数是 0（自己的能看到 300 多个）。
+所以在父进程里"找到弹窗再关掉"这条路根本不成立。
+
+**怎么投进去的**：建会话之前把守护脚本挂到 HKCU 的 Run 键，子会话登录时系统会在
+子会话里执行它。HKCU 是各会话共享的同一份注册表。豆包往 explorer 注入
+`pip_remote.dll` 达到同样目的，那需要编译器，这台机器没有。
+
+`start` 默认自动挂载，`stop` 自动撤下。看状态：
+
+```json
+"guard": {
+  "running": true, "session": 6, "console_session": 1,
+  "closed_total": 1, "beat_age_seconds": 0.3, "close_dialogs": true
+}
+```
+
+`running` 是心跳判定的，不是"文件存在"——心跳超过 8 秒没刷新就算停了。
+
+单独控制：`IsolatedSession(action="guard", enable=false)` 撤下，
+`enable=true, close_dialogs=false` 只挂载不关窗，
+`keep_titles="PowerToys;记事本"` 保留这些标题不关。
+
 三点已知约束，先说在前面：
 
 - **子会话的存活绑在 RDP 宿主进程上**，宿主一退会话就掉线。`start` 会起一个

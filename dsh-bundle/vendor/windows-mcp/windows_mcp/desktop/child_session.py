@@ -550,6 +550,192 @@ def _host_paths() -> tuple[str, str, str]:
     return script, ready, stop
 
 
+# ---------------------------------------------------------------- 会话内守护（guard）
+#
+# 为什么需要：父会话看不见子会话的窗口。Windows 按 session 隔离窗口站，实测父进程
+# EnumWindows 拿到的子会话顶层窗口数是 0（自己的能看到 300 多个）。所以在父进程里
+# "找 UAC 弹窗再关掉"这条路根本不成立 —— 找不到。
+#
+# 豆包（DoubaoWork）往子会话的 explorer 注入 pip_remote.dll 来解决，那需要编译器。
+# 这台机器没有编译器，于是换一条等价但更轻的路：
+#
+#   **建会话之前先往 HKCU 的 Run 键预置一个启动项**，子会话登录时系统会在子会话里
+#   自动执行它。HKCU 是各会话共享的同一份注册表，子会话读到的是同一份 Run 键。
+#
+# 实测（本机 Win10 19045）：
+#   guard 在子会话 3 里跑起来，mySession=3、consoleSession=1，
+#   枚举到子会话里的 #32770 对话框（PowerToys 错误），
+#   PostMessage(WM_CLOSE) 返回 True，对话框确实关掉了。
+#
+# 代价与边界：
+#   - Run 键是全局的，所以在 start 之前设、在 stop 之后撤，中间别让用户自己去登录。
+#   - 只关 #32770（标准对话框类名）。UAC 的安全桌面是另一个窗口站，够不着；
+#     这里关的是普通对话框、报错框、安装确认框这类会阻塞自动化的东西。
+
+GUARD_STATE_NAME = "dsh-gui-guard-state.json"
+GUARD_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+GUARD_RUN_VALUE = "DshGuiGuard"
+
+#: 状态文件里超过这么久没心跳，就认为 guard 没在跑（秒）。
+GUARD_STALE_SECONDS = 8.0
+
+
+def _guard_paths() -> tuple[str, str]:
+    """(脚本路径, 状态文件路径)"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(here, "guard_in_session.ps1")
+    tmpdir = os.environ.get("TEMP") or os.path.expanduser("~")
+    return script, os.path.join(tmpdir, GUARD_STATE_NAME)
+
+
+def _guard_cmd_path() -> str:
+    """Run 键指向的那个 .cmd 包装。
+
+    为什么不能直接把 pwsh 命令行写进 Run 键：Winlogon 启动 Run 项时不走 cmd，
+    直接把整串当程序名去 CreateProcess，带引号的长命令行会被截断或解析失败。
+    用 .cmd 包一层最稳 —— 实测直接写 pwsh 命令行那次子会话里什么都没启动，
+    换成 .cmd 之后同样的脚本就能起来。
+    """
+    tmpdir = os.environ.get("TEMP") or os.path.expanduser("~")
+    d = os.path.join(tmpdir, "dsh-guard")
+    return os.path.join(d, "run.cmd")
+
+
+def _guard_command(script: str, state: str, close_dialogs: bool,
+                   interval_ms: int = 1500, keep_titles: str = "") -> str:
+    """生成 .cmd 包装文件的内容，返回它的路径；失败返回空串。
+
+    Run 键存的值是 ``"<这个 cmd 的路径>"``。脚本参数全部写死在 cmd 里，
+    Run 键那一侧只负责"启动它"。
+    """
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        return ""
+    cmd_path = _guard_cmd_path()
+    try:
+        os.makedirs(os.path.dirname(cmd_path), exist_ok=True)
+    except OSError:
+        return ""
+
+    parts = [
+        f'"{pwsh}"', "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-WindowStyle", "Hidden",
+        "-File", f'"{script}"',
+        "-StateFile", f'"{state}"',
+        "-IntervalMs", str(int(interval_ms)),
+        "-CloseDialogs", ("true" if close_dialogs else "false"),
+    ]
+    if keep_titles:
+        parts += ["-KeepTitles", f'"{keep_titles}"']
+
+    body = "@echo off\r\n" + " ".join(parts) + "\r\n"
+    try:
+        # 用系统默认编码（GBK）写：路径里可能带中文，UTF-8 会被 cmd 读成乱码。
+        with open(cmd_path, "wb") as f:
+            f.write(body.encode("mbcs", errors="replace"))
+    except (OSError, LookupError):
+        try:
+            with open(cmd_path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write(body)
+        except OSError:
+            return ""
+    return cmd_path
+
+
+def arm_guard(close_dialogs: bool = True, interval_ms: int = 1500,
+              keep_titles: str = "") -> tuple[bool, str]:
+    """在建会话之前把 guard 挂到 HKCU 的 Run 键上。
+
+    必须在 start_host 之前调用 —— 子会话登录时才会读 Run 键，登录完了再设就没用了。
+    """
+    script, state = _guard_paths()
+    if not os.path.isfile(script):
+        return False, f"guard 脚本缺失: {script}"
+
+    cmd_path = _guard_command(script, state, close_dialogs, interval_ms, keep_titles)
+    if not cmd_path:
+        return False, "找不到 pwsh，guard 无法挂载"
+
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, GUARD_RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, GUARD_RUN_VALUE, 0, winreg.REG_SZ, f'"{cmd_path}"')
+    except OSError as e:
+        return False, f"写 Run 键失败: {e}"
+
+    # 清掉上一次的状态，免得 status 读到旧心跳以为它还活着
+    try:
+        os.remove(state)
+    except OSError:
+        pass
+    return True, f"guard 已挂到 Run 键（{cmd_path}），下次子会话登录时启动"
+
+
+def disarm_guard() -> bool:
+    """把 guard 从 Run 键撤掉。返回是否真的删除了一个值。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, GUARD_RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, GUARD_RUN_VALUE)
+            return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def guard_armed() -> bool:
+    """Run 键上还挂着 guard 吗。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, GUARD_RUN_KEY, 0,
+                            winreg.KEY_QUERY_VALUE) as key:
+            winreg.QueryValueEx(key, GUARD_RUN_VALUE)
+            return True
+    except OSError:
+        return False
+
+
+def guard_status() -> dict:
+    """读 guard 的心跳状态。父进程只能通过这个文件知道子会话里发生了什么。"""
+    _, state = _guard_paths()
+    result: dict = {"armed": guard_armed(), "state_file": state}
+    if not os.path.isfile(state):
+        result.update({"running": False, "reason": "状态文件还没生成（子会话可能刚起，或 Run 键没生效）"})
+        return result
+    try:
+        import json
+        with open(state, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        result.update({"running": False, "reason": f"状态文件读不了: {e}"})
+        return result
+
+    result.update({
+        "pid": data.get("pid"),
+        "session": data.get("session"),
+        "console_session": data.get("console_session"),
+        "close_dialogs": data.get("close_dialogs"),
+        "closed_total": data.get("closed_total", 0),
+        "started": data.get("started"),
+        "beat_at": data.get("now"),
+    })
+
+    # 心跳新鲜度：状态文件每秒写一次，超过阈值就是停了
+    age = None
+    try:
+        age = time.time() - os.path.getmtime(state)
+    except OSError:
+        pass
+    result["beat_age_seconds"] = round(age, 1) if age is not None else None
+    result["running"] = bool(age is not None and age <= GUARD_STALE_SECONDS)
+    if not result["running"]:
+        result["reason"] = f"心跳已停 {result['beat_age_seconds']}s（阈值 {GUARD_STALE_SECONDS}s）"
+    return result
+
+
 def host_running() -> bool:
     """靠「有活动的子会话 explorer」来判断宿主还活着。
 
@@ -620,7 +806,9 @@ def preview_window() -> Optional[dict]:
 
 def start_host(width: int = 1280, height: int = 720,
                timeout: float = 70.0, visible: bool = True,
-               left: int = -1, top: int = -1) -> tuple[bool, str, Optional[dict]]:
+               left: int = -1, top: int = -1,
+               guard: bool = True, guard_close_dialogs: bool = True,
+               guard_keep_titles: str = "") -> tuple[bool, str, Optional[dict]]:
     """起常驻宿主，等它把子会话拉起来。
 
     返回 (成功, 消息, 会话信息)。宿主是一个独立进程，插件卸载 / 重载
@@ -631,6 +819,11 @@ def start_host(width: int = 1280, height: int = 720,
     用户的键鼠本来就不在那边。窗口只在用户主动点它时才会拿到焦点。
 
     ``left``/``top`` 传非负值可以指定位置，例如用户想把窗挪到副屏。
+
+    ``guard=True``（默认）会在建会话**之前**把守护脚本挂到 HKCU 的 Run 键上，
+    子会话登录时自动在子会话里跑起来，负责关掉 #32770 对话框（UAC、报错框、
+    安装确认框这类会阻塞自动化的东西）。父会话看不见子会话的窗口，这层代理是
+    唯一能碰到那些对话框的手段。``guard_close_dialogs=False`` 只挂载不关窗。
     """
     import subprocess
 
@@ -641,6 +834,7 @@ def start_host(width: int = 1280, height: int = 720,
         return True, "宿主已在运行，复用现有子会话", {
             "session_id": sid, "explorer_pid": pid,
             "user": info.get("user"), "state": info.get("state"),
+            "guard": guard_status(),
         }
 
     cred = load_credential()
@@ -657,6 +851,16 @@ def start_host(width: int = 1280, height: int = 720,
             os.remove(p)
         except OSError:
             pass
+
+    # guard 必须在建会话之前挂上：子会话登录时才读 Run 键，登录完再设就没用了。
+    guard_msg = ""
+    if guard:
+        guard_ok, guard_msg = arm_guard(
+            close_dialogs=guard_close_dialogs, keep_titles=guard_keep_titles)
+        if not guard_ok:
+            # 挂不上不算致命错误：子会话照样能建，只是没有自动关窗能力。
+            # 把这个事实带回去，别让调用方以为 guard 在跑。
+            guard_msg = f"guard 未挂载（{guard_msg}），子会话仍会创建"
 
     # 找 pwsh；没有就退回 powershell.exe
     pwsh = shutil.which("pwsh") or shutil.which("powershell")
@@ -705,11 +909,15 @@ def start_host(width: int = 1280, height: int = 720,
             if el:
                 sid, pid = el
                 info = session_info(sid)
+                # guard 是 Run 键拉起的，登录完成后还要几秒才写出第一份心跳。
+                # 这里不等它，先把会话状态报回去；调用方要看 guard 就再查 status。
                 return True, f"宿主已就绪（pid {proc.pid}），子会话 {sid}", {
                     "session_id": sid, "explorer_pid": pid,
                     "user": info.get("user"), "state": info.get("state"),
                     "host_pid": proc.pid,
                     "preview_visible": visible,
+                    "guard_armed": guard_armed(),
+                    "guard_note": guard_msg,
                 }
         if proc.poll() is not None:
             return False, f"宿主进程已退出（码 {proc.returncode}）", None
@@ -762,12 +970,16 @@ def stop_host(timeout: float = 30.0) -> tuple[bool, str]:
     """
     _, ready_file, stop_file = _host_paths()
 
+    # 先把 guard 从 Run 键撤掉。Run 键是全局的，留着的话用户下次自己登录
+    # 也会被拉起一个守护进程，那不是他要的。
+    guard_removed = disarm_guard()
+
     # 先记下当前有哪些子会话，注销时按这个名单来
     targets = [sid for sid, _, _ in list_sessions() if sid >= 2]
     host_alive = host_running()
 
     if not targets and not host_alive:
-        return True, "没有运行中的子会话"
+        return True, ("没有运行中的子会话" + ("（guard 已撤下）" if guard_removed else ""))
 
     # 第 1 步：让宿主断开
     if host_alive:
@@ -805,11 +1017,19 @@ def stop_host(timeout: float = 30.0) -> tuple[bool, str]:
         except OSError:
             pass
 
+    # guard 的状态文件也清掉，免得下次 status 读到上一次的旧心跳
+    _, guard_state = _guard_paths()
+    try:
+        os.remove(guard_state)
+    except OSError:
+        pass
+
     if still:
         return False, (f"注销了 {logged_off or '无'}，但这些会话仍在：{still}"
                        + (f"；注销失败：{', '.join(failed)}" if failed else ""))
     if failed:
         return False, f"注销失败：{', '.join(failed)}"
     if logged_off:
-        return True, f"子会话已注销：{logged_off}"
+        return True, (f"子会话已注销：{logged_off}"
+                      + ("；guard 已从 Run 键撤下" if guard_removed else ""))
     return True, "没有需要注销的子会话"
