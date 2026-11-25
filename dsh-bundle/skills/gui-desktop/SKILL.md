@@ -19,11 +19,11 @@ metadata:
 
 | 工具 | 一句话 | 找它的哪个参数 |
 |---|---|---|
-| `Screen` | 看屏幕 | `mode`：`full` 控件树 + 图 / `fast` 只出图 / `displays` 显示器与 DPI |
-| `Input` | 动手 | `action`：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit / clipboard_get / clipboard_set |
+| `Screen` | 看屏幕 | `mode`：`full` 控件树 + 图 / `fast` 只出图 / `displays` 显示器与 DPI；另有 `force_image` |
+| `Input` | 动手 | `action`：click / type / scroll / move / shortcut / wait / wait_for / multi_select / multi_edit / clipboard_get / clipboard_set / sequence |
 | `Programs` | 开程序、管窗口、查杀进程 | `mode`：launch / launch_executable / resize / switch / list / kill |
 | `System` | 命令、文件、注册表 | `mode`：文件 8 种 + 注册表 `reg_*` 4 种 + `shell` |
-| `Scrape` | 抓网页 | `url` |
+| `Scrape` | 抓网页 | `url` / `query` / `use_dom` / `use_sampling` |
 | `ControlStatus` | 谁在控制 | `release=true` 交还 |
 | `VirtualDesktop` | 任务栏那几组窗口 | `action` 八种 |
 | `IsolatedSession` | 独立子会话（不抢键鼠） | `action`：status/setup/start/stop/inject/guard/forget |
@@ -48,7 +48,7 @@ metadata:
 
 ### 1. 先观察后动手
 
-动手之前一定先看。三种看法，按需选：
+动手之前一定先看。四种看法，按需选：
 
 | 用法 | 什么时候用 | 代价 |
 |---|---|---|
@@ -64,15 +64,22 @@ metadata:
 `Screen` 支持 `region=[left,top,right,bottom]`，**一定要用**：全屏快照会把任务栏、
 壁纸、无关窗口全塞进来，既贵又乱。锁到你要操作的那一块。
 
-**帧没变就别再量坐标。** 返回里的 `unchanged=true` 说明画面和上一帧一模一样，
-你手上那张图和它上面的坐标仍然有效，直接用，不用重新 `Screen`。
-`force_image=true` 可以强制出图，但只影响当次，不会关掉去重。
+**帧没变就别再量坐标。** 返回里带 `frame_hash`、`unchanged`、`image_attached` 三个字段：
 
-> 注意：全屏连拍通常永远是 `unchanged=false`（桌面总有像素在变），
+- `unchanged=true` → 这个截图范围和上次拍的**像素完全一致**，返回里会出现一段
+  `Frame Unchanged Note`，并且**不重复附图**（`image_attached=false`）。
+- 这时候先问自己一件事：**我手上到底有没有这块区域的上一帧图？**
+  - 有 → 那张图和它上面的坐标仍然有效，直接用，不必重新量，也不必再要图。
+  - 没有（比如你这次才第一次拍这块）→ 带 **`force_image=true`** 再调一次。去重状态是
+    **进程级全局**的，不区分调用方，所以 `true` 也可能是别的智能体拍的。
+- `force_image=true` 只影响**本次是否附图**，不会关掉去重簿记。
+
+> 注意：全屏连拍通常永远是 `unchanged=false`（桌面总有像素在变，实测 0.098% 持续变化），
 > **静止区域**才会触发去重。所以 `region` 锁得越准，越容易拿到这个信号。
 
-返回的 `Coordinate Contract` 行会告诉你这张图和屏幕的换算关系。**只认这行**：
-1:1 时直接用，缩放时按它给的倍率乘，控件树里的坐标是屏幕物理像素、**不乘**。
+返回里还有一行 **`Coordinate Contract`**，说清这张图和屏幕的换算关系。**只认这行**：
+`image pixel = screen pixel`（1:1）时直接用；缩放时按它给的倍率乘你**从图上量出来的**坐标；
+控件树里的坐标永远是屏幕物理像素，**不乘**。没有附图时它也会直说没有可换算的图像坐标。
 
 ### 2. 精确定位
 
@@ -110,8 +117,11 @@ metadata:
 
 这个工具会**抢占真实鼠标键盘**。人在键盘前动一下就会打架。
 
-- 开场先 `ControlStatus` 看当前状态（`state` / `policy` / `idle_timeout_seconds`）
+- 开场先 `ControlStatus` 看当前状态（`state` / `policy` / `idle_timeout_seconds` / `glow_release_pending`）
 - 干完活主动 `ControlStatus(release=true)` 交还，**不要让用户等你**
+- 1.3.1 起一轮调用结束后有 2 秒宽限期（`glow_release_grace_seconds`），宽限期内没有新调用
+  就自动撤掉蓝光和面板。**但别指望它**：宽限期只管「这一轮结束了」，`agent_idle_release_seconds`
+  （120 秒）才是兜底，中间这段时间光一直亮着。显式 `release` 永远是对的
 - 需要长时间操作时，先说一句"接下来会接管鼠标键盘"
 
 默认策略是 `relaxed`：`Input` 的所有动作会先拿桌面所有权（含剪贴板）；
@@ -137,7 +147,7 @@ metadata:
 
 ## 隔离会话（`IsolatedSession`）
 
-要长时间操作、又不想抢用户键鼠时用它。`action` 六个：
+要长时间操作、又不想抢用户键鼠时用它。`action` 七个：
 
 | action | 干什么 | 代价 |
 |---|---|---|
@@ -145,8 +155,8 @@ metadata:
 | `setup` | 弹一次 Windows 凭据框，密码用 DPAPI 加密存本机 | 要输一次密码 |
 | `start` | 起一个常驻宿主进程建子会话，默认 1280×720 | 约 16 秒 |
 | `stop` | 让宿主断开，`WTSLogoffSession` 注销会话 | 约 2 秒 |
-| `inject` | 往子会话的 explorer 里注入 DLL | 需要 `dll_path` |
-| `guard` | 会话内守护：自动关 #32770 对话框（UAC、报错框、安装确认框） | `enable` 挂/撤，`close_dialogs` 关不关，`keep_titles` 白名单 |
+| `inject` | 往子会话的 explorer 里注入 DLL | 需要 `dll_path`；**本机没有编译器，这条路上游留着但没法自建 DLL** |
+| `guard` | 会话内守护：自动关 #32770 对话框（UAC、报错框、安装确认框）。`enable` 挂/撤，`close_dialogs` 关不关，`keep_titles` 白名单 | 改 HKCU 的 Run 键，不碰当前桌面 |
 | `forget` | 删掉存下的凭据 | — |
 
 **`start` 会在主屏右下角摆一个预览窗**，里面是子会话的实时画面。用户能看见

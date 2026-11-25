@@ -19,18 +19,18 @@ DSH 的图形层：用 `@deepseek-ai/dsh-mcp-client` 起一个 stdio MCP 服务�
 
 ## 提供什么
 
-服务器名固定为 `gui`，**8 个工具**：
+服务器名固定为 `gui`，**8 个工具**（版本 **1.3.1**）：
 
 | 工具 | 干什么 | mode / action |
 |---|---|---|
-| `Screen` | 看屏幕 | `full`（控件树 + 图）· `fast`（只出图）· `displays`（显示器与 DPI） |
-| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` |
+| `Screen` | 看屏幕 | `full`（控件树 + 图，默认）· `fast`（只出图）· `displays`（显示器与 DPI）。另有 `force_image` 强制出图 |
+| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` `sequence` |
 | `Programs` | 启动程序、管窗口、查杀进程 | `launch` `launch_executable` `resize` `switch` `list` `kill` |
-| `System` | 命令、文件、注册表 | 文件 8 个 mode；注册表 `reg_*` 4 个；命令 `shell` |
-| `Scrape` | 抓网页 | — |
-| `ControlStatus` | 谁在控制、空闲多久交还 | `release` |
+| `System` | 命令、文件、注册表 | 文件 `read` `write` `copy` `move` `delete` `list` `search` `info`；注册表 `reg_get` `reg_set` `reg_delete` `reg_list`；命令 `shell` |
+| `Scrape` | 抓网页（`use_dom=true` 读浏览器当前页） | 无 mode，参数 `url` `query` `use_dom` `use_sampling` |
+| `ControlStatus` | 谁在控制、空闲多久交还 | 参数 `release` |
 | `VirtualDesktop` | 任务栏那几组窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
-| `IsolatedSession` | 独立子会话，不抢键鼠 | `status` `setup` `start` `stop` `inject` `forget` |
+| `IsolatedSession` | 独立子会话，不抢键鼠 | `status` `setup` `start` `stop` `inject` `guard` `forget` |
 
 从 15 个合并到 8 个的依据是参数包含关系，不是凑数：`Screenshot` 的六个参数全在
 `Snapshot` 里、`DisplayInventory` 一个参数都没有、`Clipboard` 的 `text` 在 `Input`
@@ -87,11 +87,19 @@ env:
 ## 改
 
 - 换服务器网关名：`cordis.patch.yml` 里的 `serverName`（工具前缀随之变化，规则 `^[A-Za-z0-9_-]{1,32}$`）
-- 退回纯上游：删掉 `PYTHONPATH` 那段即可（8 个工具会退回上游版，`VirtualDesktop` 与 `IsolatedSession` 消失）
+- 退回纯上游：删掉 `PYTHONPATH` 那段即可（工具会退回上游的 21 工具版，`VirtualDesktop` 与 `IsolatedSession` 消失，屏幕提示变回英文）
 - 命令跑得慢：调 `toolCallTimeoutMs` / `startupTimeoutMs`
 - 不想自动重连：`reconnect.enabled: false`
 
 改完在插件页重新启用 `include:gui` 即可热加载。
+
+> **改了 `vendor/windows-mcp` 里的 Python 源码，必须删 `__pycache__` 再重启**，
+> 否则 `.pyc` 旧字节码会盖住新代码，而且毫无征兆：
+>
+> ```powershell
+> Get-ChildItem vendor\windows-mcp -Recurse -Directory -Filter __pycache__ |
+>   Remove-Item -Recurse -Force
+> ```
 
 ## 自检
 
@@ -104,12 +112,14 @@ node selftest.js --no-connect # 只验结构与技能
 
 验的是三件「改对了也看不出来」的事：
 
-1. **包结构** —— `dsh.bundle.patch`、`exports['./package.json']`、`args` 里没有相对路径、
+1. **包结构** —— `dsh.bundle.patch`、`args` 里没有相对路径、`command` 是 `!!js` 探测出来的
+   （不许写死某台机器的 uvx 路径）、`--from` 钉了 `windows-mcp==0.8.9`、
    `PYTHONPATH` 指向的是完整源码树而不是增量覆盖层。
 2. **技能 frontmatter** —— `name` 是 kebab-case 且与目录名一致、`description` 不为空。
    缺 description 时 dsh 会静默不加载，用户只看到「AI 不会用」，没有任何报错。
 3. **连接层** —— 真起 stdio、`initialize`、`tools/list`，确认工具数是 8、8 个名字都在
-   `VirtualDesktop` 与 `IsolatedSession` 都在（本地分支生效）、工具名不重复、
+   （`VirtualDesktop` 与 `IsolatedSession` 都在，说明本地分支生效）、9 个旧工具名
+   一个都没重现、每个工具的 `mode` / `action` 枚举齐全、工具名不重复、
    屏幕提示文案是中文、名字合 dsh 字符集。
 
 ## 提交

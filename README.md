@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/forkgo430/dsh-gui-forkgo/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/dsh-gui-forkgo/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![tools](https://img.shields.io/badge/tools-15-brightgreen.svg)](#提供什么)
+[![tools](https://img.shields.io/badge/tools-8-brightgreen.svg)](#提供什么)
 [![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](#环境要求)
 
 让 AI 操作 Windows 界面：截屏观察、点击、输入、快捷键、窗口与进程、虚拟桌面。
@@ -19,7 +19,7 @@
 三种装法，选一个：
 
 ```powershell
-# ① 从 npm（最省事，但版本可能落后于源码）
+# ① 从 npm（最省事）
 npm i dsh-gui-forkgo
 
 # ② 本地目录（改源码立即生效，开发用这个）
@@ -27,13 +27,16 @@ npm i dsh-gui-forkgo
 plugin_manager install_bundle，target 指到 dsh-bundle/ 的绝对路径
 
 # ③ GitHub Release 的 tgz
-npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.2.0/dsh-gui-forkgo-1.2.0.tgz
+npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.3.1/dsh-gui-forkgo-1.3.1.tgz
 ```
 
-> **⚠ npm 上的版本和源码不同步。**
-> npm 是 `1.2.2`（2026-11-21 审核通过），本地源码也是 `1.2.2`，但**内容不一样**：
-> 本地多了 `agent_idle_release_seconds`（智能体长时间不动作就自动交还控制权）。
-> 版本号相同是历史遗留，不是笔误。要完整功能请用**本地目录**装法。
+三个渠道的版本号都是 **1.3.1**，内容一致 —— npm 已经和本地对齐，装哪儿都一样。
+从本地目录装最省事，也最容易改。
+
+> **1.3.0 发不出去，别去试。** npm 服务端把版本 `1.3.0` 标成「已占用」：
+> `409 Cannot publish over previously staged version "1.3.0"`，
+> 但 `https://registry.npmjs.org/-/stage` 返回 `{"items":[],"total":0}` —— 暂存队列其实是空的。
+> 服务端状态不一致，没有客户端能绕过去，只能换版本号。1.3.1 就是换号后的那一版。
 
 装完重启插件行，可以直接说：
 
@@ -56,13 +59,13 @@ npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.2.0/dsh-g
 | 工具 | 干什么 | mode / action |
 |---|---|---|
 | `Screen` | 看屏幕 | `full`（控件树 + 图，默认）· `fast`（只出图）· `displays`（显示器与 DPI） |
-| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` |
+| `Input` | 鼠标、键盘、剪贴板、等待 | `click` `type` `scroll` `move` `shortcut` `wait` `wait_for` `multi_select` `multi_edit` `clipboard_get` `clipboard_set` `sequence` |
 | `Programs` | 启动程序、管窗口、查杀进程 | `launch` `launch_executable` `resize` `switch` `list` `kill` |
 | `System` | 命令、文件、注册表 | 文件 `read` `write` `copy` `move` `delete` `list` `search` `info`；注册表 `reg_get` `reg_set` `reg_delete` `reg_list`；命令 `shell` |
 | `Scrape` | 抓网页；`use_dom=true` 读浏览器当前页 | — |
 | `ControlStatus` | 谁在控制、空闲多久交还、截图缓存状态 | `release` |
 | **`VirtualDesktop`** | 任务栏那几组窗口：列出、新建、切换、重命名、删除、搬窗口 | `list` `current` `windows` `create` `switch` `rename` `remove` `move_window` |
-| **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘 | `status` `setup` `start` `stop` `inject` `forget` |
+| **`IsolatedSession`** | 独立子会话：AI 在另一个桌面里操作，不抢你的鼠标键盘 | `status` `setup` `start` `stop` `inject` `guard` `forget` |
 
 另有一份技能 `gui-desktop`，说明这些工具的使用顺序。
 
@@ -116,12 +119,16 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 ```
 
 接管方式有两种：大幅移动鼠标，或按 `Ctrl + Alt + Shift + Backspace`。
-面板在 1920 宽的屏上约 424×118，占屏幕 22%×11%；窄屏自动缩小。
+面板在 1920 宽的屏上约 429×125，占屏幕 22%×12%；窄屏自动缩小。
 
-字体用的是等线（`Dengb.ttf` 28px / `Deng.ttf` 19px），不是微软雅黑。
-在本机 412 个字体里挑了几套渲染同一段中文做对比：雅黑的中文笔画在小字号下
-发软，黑体太硬，等线的中英混排最干净。面板不透明度也从 0.80 提到 0.88——
-原来的透明度会让白字透出背景色，笔画边缘发灰。
+字体用的是思源黑体 Noto Sans SC（标题 `Noto Sans SC Medium` 30px / 提示行 19px），
+回退链是 思源 → 等线 → 雅黑 → 黑体。在本机 412 个字体里挑了几套渲染同一段中文做对比：
+等线 Bold 横粗竖细、28px 下笔画发硬，雅黑 Bold 太粗、19px 提示行发糊，思源最干净。
+面板不透明度从 0.88 提到 **1.0**——半透明会让背后任何文字透上来，和面板自己的标题
+叠成两层，读起来像渲染重影。1.0 之后边缘仍有 8px 羽化，不会切出生硬的直角。
+
+接管确认框也是同一套设计语言：Canvas 手绘、无边框、深蓝渐变底、亮蓝 2px 描边、
+圆角、自绘按钮（悬停变色）、右上角自绘关闭键，Esc 等于拒绝。
 
 **`IsolatedSession` 也是本仓加的（1.2.0）。**
 
@@ -208,7 +215,7 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 
 ```
 IsolatedSession(action="setup")   → 弹一次凭据框，存下来
-IsolatedSession(action="start")   → 起宿主建会话，约 5 秒就绪，预览窗出现
+IsolatedSession(action="start")   → 起宿主建会话，约 16 秒就绪，预览窗出现
 IsolatedSession(action="status")  → 确认 state=active、explorer 在、预览窗 on_screen
 IsolatedSession(action="stop")    → 收工，宿主退出 + 会话注销
 ```
@@ -220,9 +227,10 @@ IsolatedSession(action="stop")    → 收工，宿主退出 + 会话注销
 
 | 要求 | 说明 |
 |------|------|
-| Windows 10 / 11 | UI Automation 与虚拟桌面 API 只在 Windows 可用 |
+| Windows 10 / 11 | UI Automation 与虚拟桌面 API 只在 Windows 可用。**实际只在 Win10 19045 真机跑过，Win11 未验证** |
 | DSH | 需要插件系统与 MCP 客户端（`@deepseek-ai/dsh-mcp-client`） |
 | [`uvx`](https://docs.astral.sh/uv/) 在 PATH 上 | 首次启动会拉 Python 3.14 与 pywin32、comtypes、dxcam。**没装 uvx 是 Win11 上最常见的报错来源**——`mcp-client(gui): initial connection or tool synchronization failed`，装好 `winget install --id=astral-sh.uv -e` 再重启插件行 |
+| 中文字体（可选） | 屏幕提示优先用 Noto Sans SC 思源黑体，没装会自动回退到等线 → 雅黑 → 黑体，不影响功能 |
 
 ## 它怎么工作
 
@@ -291,18 +299,20 @@ npm run selftest:offline   # 只验结构与技能
 
 ### 改完源码怎么生效
 
-用本地目录装法时，改代码不会自动生效，有两道坎：
-
-```
-改源码
-  → 关掉插件行 include:gui
-  → 删掉 vendor/windows-mcp 下的所有 __pycache__
-  → 重新打开插件行
-```
-
-**为什么必须删 `__pycache__`**：Python 会优先用 `.pyc` 里的旧字节码。改完源码
-不删缓存，进程重启后跑的可能还是旧逻辑，而且看不出任何征兆——我在这上面浪费过
-一整轮排查，明明代码改了、进程重启了，行为还是旧的。
+> ## ⚠ 改完源码必须删 `__pycache__`
+>
+> 用本地目录装法时，改代码不会自动生效，顺序是：
+>
+> ```
+> 改源码
+>   → 关掉插件行 include:gui
+>   → 删掉 vendor/windows-mcp 下的所有 __pycache__
+>   → 重新打开插件行
+> ```
+>
+> **不删就跑，等于没改。** Python 会优先用 `.pyc` 里的旧字节码，进程重启后跑的还是
+> 旧逻辑，而且**没有任何征兆**——不报错、不告警、日志干净。我在这上面浪费过一整轮
+> 排查：代码确认改了、进程确认重启了、行为还是旧的。这一步**没有例外**。
 
 一条命令清掉：
 
@@ -311,7 +321,9 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
   Remove-Item -Recurse -Force
 ```
 
-它挡的是四类「改对了也看不出来」的问题：
+`vendor/` 之外的地方改了不用管，只有这份源码树走 `PYTHONPATH`。
+
+下面是自检覆盖的四类「改对了也看不出来」的问题：
 
 1. **包结构** —— `dsh.bundle.patch` 是否存在、`args` 里有没有相对路径、
    `command` 是不是探测而来（不能写死某个人的 uvx 路径）、`--from` 有没有钉版本、
@@ -360,10 +372,14 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 | 问题 | 解决方案 |
 |------|---------|
 | **`mcp-client(gui): initial connection or tool synchronization failed`** | **先看下面那行 `cause`。十有八九是没装 `uvx`，或者装了但 PATH 里没有。`winget install --id=astral-sh.uv -e`，装完重开终端，再关掉插件行重新启用一次** |
+| **npm 报 `409 Cannot publish over previously staged version`，但 `npm stage list` 是空的** | **这是 npm 服务端的版本状态不一致，不是本地的问题。`https://registry.npmjs.org/-/stage` 返回 `{"items":[],"total":0}`，暂存队列其实是空的，那个版本号却被钉成「已占用」——没有任何客户端参数能绕过去。**换版本号**（1.3.0 就是这么废掉的，直接用 1.3.1）** |
 | 工具列表里没有 `mcp__gui__*` | 确认 `include:gui` 是 active；看插件页有没有启动失败 |
 | 插件显示 failed 但手动能起 | DSH 缓存了失败的连接状态，把插件关掉再打开一次 |
 | **改了源码但行为没变** | **删掉 `vendor/windows-mcp` 下的 `__pycache__` 再重启**。`.pyc` 旧字节码会盖住新代码，且毫无征兆 |
-| 蓝光和提示面板一直挂着不消失 | 智能体忘了交还控制权。调 `ControlStatus(release=true)`；1.2.2 起 120 秒无动作会自动交还 |
+| **`Input` 报 `CONTROL_PREEMPTED` 且 `executed_steps: 0`** | **1.3.1 已修**（`checkpoint` 里那句 `or not self._suppress` 让第一步就被自己拒掉，租约拿到了却动不了手）。如果**升级到 1.3.1 之后还出现**，看 `ControlStatus` 里的 `arm_failures` / `arm_last_error`：良性竞态（`stale` / `not_ai` / `paused` / `stopping`）不计入，涨了就说明叠加层真的没挂上，`arm_last_error` 会写原因 |
+| 工具用完光还亮着 | 1.3.1 起一轮工具调用结束后 **2 秒自动撤**（`glow_release_grace_seconds`，默认 2.0）。想调长就用环境变量 `WINDOWS_MCP_GLOW_GRACE_SECONDS`（秒，非负有限数，传错会打印告警并沿用默认）。`agent_idle_release_seconds`（120 秒）仍然作为长时间没动作的兜底 |
+| 用 `Screen` 截不到蓝光 | **设计如此，不是 bug。** `Screen` 截图前会主动把叠加层藏起来再拍，否则每次截图都带着一圈蓝框和一块面板，既挡内容又污染帧去重。要确认光还在不在，用肉眼或 `ControlStatus` 的 `state` |
+| 帧去重不生效，永远 `unchanged=false` | 去重**只在静止区域生效**。全屏连拍永远是 `false`——桌面总有像素在变（实测 0.098% 持续变化），这是正确行为。把 `region` 锁准一点才会拿到 `true`；另外去重状态是**进程级全局**的，不区分调用方，收到 `unchanged=true` 但手上没那张图时，带 `force_image=true` 再拍一次 |
 | `VirtualDesktop` 不存在 | `vendor/windows-mcp` 没被带上，跑的是 PyPI 上游的 21 工具版 |
 | 工具数变成 15 或更多 | `tools/__init__.py` 里旧模块又被加回去了。`selftest.js` 会直接报「旧工具 X 又出现了」 |
 | 屏幕提示还是英文 | 同上，`PYTHONPATH` 没指到 `vendor/` 里的源码 |
@@ -372,6 +388,7 @@ Get-ChildItem dsh-bundle\vendor\windows-mcp -Recurse -Directory -Filter __pycach
 | `initialize` 超时 | 先手动跑一次 `uvx --python 3.14 --from windows-mcp==0.8.9 windows-mcp --help` 预热 |
 | `IsolatedSession` 报 1909 | 账户被锁了。本机策略是 10 次失败锁 600 秒，等一会儿或换管理员账户解锁 |
 | `start` 一直不到就绪 | `status` 看 `credential_saved` 是不是 true；看 `%TEMP%\dsh-gui-host-ready.txt` 有没有生成 |
+| 子会话里 UAC / 报错框把自动化卡死 | `status` 看 `guard.running`（心跳，超 8 秒没刷新算停）和 `guard.closed_total`。`start` 默认已挂载；没挂上就 `IsolatedSession(action="guard", enable=true)`。父会话关不掉子会话的窗（窗口站按 session 隔离），只有守护进程在会话里面能碰 |
 | `start` 说成功但屏幕上找不到预览窗 | `status` 看 `session_detail.preview_window.on_screen`。`false` 说明窗口被挪到屏幕外（`visible=false`）、被最小化、或者被拖走了。`stop` 后用 `start()` 重来；想固定位置传 `left`/`top` |
 | 找不到子会话在干什么 | `Screen` 截的是你自己的桌面，永远不会包含子会话。要看子会话只能看那个预览窗 |
 | `stop` 说关了但会话还在 | 1.2.2 之前的版本只关宿主不注销会话。升级到 1.2.2+，或用 `WTSLogoffSession` 手动清 |

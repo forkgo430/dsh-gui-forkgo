@@ -4,6 +4,73 @@
 
 ## 1.3.1
 
+> **为什么不是 1.3.0。** 1.3.0 在 npm 上发布失败：服务端把这个版本号标成「已占用」，
+> 报 `409 Cannot publish over previously staged version "1.3.0"`，
+> 但 `https://registry.npmjs.org/-/stage` 返回 `{"items":[],"total":0}` —— 暂存队列实际是空的。
+> 服务端状态不一致，没有任何客户端参数能绕过去，只能换号。所以这一版叫 1.3.1，
+> 内容就是原本打算叫 1.3.0 的那一份。
+
+### 四个实测问题的修复
+
+**一、工具用完，四周蓝光和顶部面板不撤。**
+
+`end_call()` 只减 `_active_calls`，完全不碰叠加层。撤光只有三条路：显式 `release()`、
+`agent_idle_release_seconds`（120 秒）兜底、用户物理抢占。所以智能体跑完一轮，
+光和面板要挂满两分钟——用户以为程序卡死。
+
+新增 `glow_release_grace_seconds`（默认 **2.0**，可用环境变量
+`WINDOWS_MCP_GLOW_GRACE_SECONDS` 覆盖；传非数字或负数会打印告警并沿用默认）。
+`end_call` 记下结束时刻，看门狗检查：空闲且过了宽限期就撤。2 秒是为了包住
+`Input→Screen→Input` 这种连发间隔，不闪；120 秒兜底保留。
+
+实测（直接驱动 controller）：
+
+```
+begin_call -> state=ai    pending=False  光还亮
+end_call   -> state=ai    pending=True   宽限期内
++1s        -> state=ai    pending=True
++2s        -> state=ready pending=False  撤光
+```
+
+**二、`Input` 频繁被 `CONTROL_PREEMPTED` 拒绝，`executed_steps` 恒为 0。**
+
+`__main__.py` 注册 health probe 之后，`_set_locked` 里
+`_visual_armed = (state=="ai" and _health_probe is None)` 恒为 `False`，于是 `_suppress`
+也恒为 `False`，而 `checkpoint` 里的 `or not self._suppress` 直接拒 ——
+状态已经进 `ai`、租约也拿到了，第一步就被自己拒掉。
+
+改法：`checkpoint` 删掉 `or not self._suppress`，换成只认「真在暂停」
+（`_visual_paused`，或 armed-but-suppress-lost）。`arm_visible` 的静默 return 改成
+分类记录：良性竞态（`stale` / `not_ai` / `paused` / `stopping`）只记 debug，
+真故障计入 `_arm_failures` / `_arm_last_error` 并暴露到 `ControlStatus`。
+`apply_control_state` 的 `except` 不再 `release_control` 把整个租约打成 `unavailable`——
+叠加层一处失败不该演变成全局故障。
+
+实测：10 轮 `Input` 全部成功，`CONTROL_PREEMPTED executed_steps:0` 出现 0 次；
+物理抢占仍然有效，`executed_steps` 反映真实进度（实测 2，不是 0）。
+
+**三、帧去重在 DSH 通道下永远失效。**
+
+去重 key 的第一维是 `ctx.session_id`，而 DSH 的 MCP 客户端**每次请求都现造一个新 UUID**
+（协商的是 MCP 协议 2026-07-28，那一代每个请求自成一条连接）。key 每次都变，
+等于把去重整个关掉。直连 stdio 之所以「看起来正常」，恰恰是因为那边 `ctx.session_id`
+抛 `RuntimeError` 被吞成 `__no_session__`，意外退化成全局 key —— 不是按会话分本身对。
+
+改成全局 key（屏幕本来就是一个物理资源），并把两件事拆成独立字段：
+`Frame Unchanged`（画面变没变）和 `Image Attached`（这次附图没有）。多智能体场景下
+B 收到 `unchanged=true` 但手上没图时，文案明确说「那帧可能是别人拍的」并指向
+`force_image=true` —— 最坏是一次多余往返，不是拿着幻觉坐标点错。
+顺带加 `_FRAME_HASH_MAX=256` 的 LRU 兜底，修掉按会话分 key 时的无界增长。
+
+实测：`false, true, true, true`。
+
+**四、接管确认框简陋。**
+
+原来是 `tk.Label` / `tk.Button` 拼的：灰色立体按钮、浅灰底、系统标题栏，和蓝光面板
+完全是两套设计语言，DPI 125% 下还糊。改成 Canvas 手绘：无边框、深蓝渐变底、
+亮蓝 2px 描边、圆角、自绘按钮（悬停变色）、右上角自绘关闭键。补了拖动
+（无边框窗口本来就拖不动）和 Esc=拒绝。
+
 ### 补齐 pilot 的三项省 token 机制
 
 参照 `@momasiku/dsh-pilot` v0.7.4，给已有工具加能力，不新增工具。
@@ -173,11 +240,43 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 贡献约 22。框光承担「AI 在控」的主信号，面板只负责说按什么键接管。
 `_notice_glow_bitmap` 函数留着（预览图和几何测试还用），实时指示器不再调它。
 
+**面板字体从等线换成思源黑体（Noto Sans SC）。**（视觉）
+
+等线 Bold 的横画偏粗、竖画偏细，28px 下笔画边缘发硬，中文的「口」部框架
+（正在、这台）显得局促；英文字母又偏窄，「AI」后面会留一块不自然的空隙。
+雅黑 Bold 反过来——太粗，深色底上笔画粘连，19px 的提示行尤其发糊。
+思源黑体笔画粗细均匀，19px 上依然清晰（字面比雅黑略小、留白更多）。
+
+标题 `Noto Sans SC Medium` 28 → **30px**（思源字面小一圈，30 才回到原来的视觉高度），
+提示行维持 19px，两者差 11px，层级比原来的 9px 更清楚。回退链
+思源 → 等线 → 雅黑 → 黑体，保证没装思源的机器也能出字。
+
 **自检加了三类检查**，都是「改对了也看不出来」的坑：
 
 - `command` 不许是绝对路径、`--from` 必须钉版本；
 - 工具数必须是 8，9 个旧工具名一个都不许重现；
 - `control_policy.py` 必须覆盖全部 8 个工具。
+
+### 这一版没做成的事
+
+写清楚，免得下次又去试一遍。
+
+**`ConnectToShadowSession`（shadow 会话接入）。** 序列是完整实现的：
+`WTSIsChildSessionsEnabled` → `WTSEnableChildSessions` → `Disconnect` 预热 →
+`AllowPromptingForCredentials(false)` → `put ConnectToShadowSession` → 回读确认，
+每一步都打 hr 值。**但本机拿不到。** `C:\Windows\System32\mstscax.dll`
+（10.0.19041.4522，Win10 19045）里按 ASCII / UTF-16 双格式搜索，
+`ConnectToShadowSession` 与 `EnableChildSessions` 各 **0 次命中**，只有
+`ConnectToChildSession`；两者都返回 `0x8000FFFF`（E_UNEXPECTED = 属性名不认）。
+豆包能用大概是因为它那边的 mstscax 更新（Win11），或自带了一份。
+**失败时自动回落 child**，并在就绪文件里记录实际接入方式。child 路径一行未动。
+
+**`IMsRdpInputSink`。** 没做。vtable 顺序无公开头文件可确认，且本机 mstscax
+版本已证明落后于豆包，该接口大概率不在。
+
+**注入式代理 DLL。** 没做，**这台机器没有编译器**。`guard` 用 HKCU Run 键
+走了一条等价且更轻的路（见上文），不需要编译。
+
 
 ## 1.2.2
 
