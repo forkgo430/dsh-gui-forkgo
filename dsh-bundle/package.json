@@ -13,6 +13,7 @@
     "locale",
     "docs",
     "icon.svg",
+    "LICENSE",
     "README.md",
     "selftest.js"
   ],

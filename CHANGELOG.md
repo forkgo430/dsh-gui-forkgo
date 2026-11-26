@@ -277,6 +277,23 @@ Clipboard                                 →  Input 的 clipboard_get / clipboa
 **注入式代理 DLL。** 没做，**这台机器没有编译器**。`guard` 用 HKCU Run 键
 走了一条等价且更轻的路（见上文），不需要编译。
 
+### 分发（2026-11-26）
+
+同版本号，不涉及代码改动，只记「这个包到过哪些地方」。
+
+**已收录：**
+
+- [awesome-dsh-plugin](https://awesome-dsh-plugin.com/p/forkgo430/dsh-gui-forkgo--dsh-bundle/) —— 母索引，PR #18828 已合并
+- `dsh-plugin-catalog`（同一个索引的 npm 镜像，Discover 默认源），条目在 `index.json` 里，`source.type: npm`
+- [dshmarketplace.dev](https://dshmarketplace.dev/api/v1/plugins?q=dsh-gui-forkgo) —— `inRegistry: true`，安装命令 `dsh plugin --profile web add dsh-gui-forkgo`
+
+**挂着的：** dsh-community-plugins #266、dsh-plugin-radar #2106、dsh.so（已入库待合并）。
+
+**没成的：** dshworks/awesome-dsh-plugins（`data/plugins.json` 太大，两次都没写进去）。
+
+**未动但已加进工作区：** `dsh-bundle/LICENSE` + `files` 加 `"LICENSE"`。
+dsh.so 的硬检查要求 tarball 里带许可文件，1.3.1 的包里没有，**下次发版生效**。
+
 
 ## 1.2.2
 

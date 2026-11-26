@@ -33,6 +33,15 @@ npm i https://github.com/forkgo430/dsh-gui-forkgo/releases/download/v1.3.1/dsh-g
 三个渠道的版本号都是 **1.3.1**，内容一致 —— npm 已经和本地对齐，装哪儿都一样。
 从本地目录装最省事，也最容易改。
 
+也可以从插件市场装（进 Discover 搜 `dsh-gui-forkgo`，或直接加这个索引源）：
+
+```
+https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json
+```
+
+[![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-blue.svg)](https://awesome-dsh-plugin.com/p/forkgo430/dsh-gui-forkgo--dsh-bundle/)
+[![dshmarketplace](https://img.shields.io/badge/dshmarketplace.dev-listed-blue.svg)](https://dshmarketplace.dev/api/v1/plugins?q=dsh-gui-forkgo)
+
 > **1.3.0 发不出去，别去试。** npm 服务端把版本 `1.3.0` 标成「已占用」：
 > `409 Cannot publish over previously staged version "1.3.0"`，
 > 但 `https://registry.npmjs.org/-/stage` 返回 `{"items":[],"total":0}` —— 暂存队列其实是空的。
